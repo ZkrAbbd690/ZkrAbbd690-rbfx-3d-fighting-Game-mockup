@@ -8,7 +8,7 @@ A complete **TPS style example** built with the **rbfx** game engine. Learn rbfx
 
 ## What is rbfx?
 
-**rbfx** is a modern fork of the Urho3D game engine, designed for cross-platform 2D and 3D game development. It provides a lightweight, data-driven architecture with a powerful scene graph, physics integration, and a component-based entity system. rbfx is ideal for rapid prototyping and building production-ready games using C++ or AngelScript.
+**rbfx** is a modern fork of the Urho3D game engine, designed for cross-platform 2D and 3D game development. It provides a lightweight, data-driven architecture with a powerful scene graph, physics integration, and a component-based entity system. rbfx is ideal for rapid prototyping and building production-ready games using C++.
 
 ## Features
 
