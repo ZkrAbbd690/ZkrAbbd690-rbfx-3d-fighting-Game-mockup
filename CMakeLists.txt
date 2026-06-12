@@ -1,30 +1,49 @@
 cmake_minimum_required(VERSION 3.15)
-project(FighterProject)
+project(rbfx-tps-example)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Point to the installed CMake config files
-set(Urho3D_DIR "D:/urho3d-evolution/rbfx/install/lib/cmake/Urho3D")
+# Find rbfx SDK
+# Adjust this path to match your rbfx installation
+set(RBFX_SDK_PATH "" CACHE PATH "Path to rbfx SDK")
 
-find_package(Urho3D REQUIRED)
+if(NOT RBFX_SDK_PATH)
+    message(FATAL_ERROR "Please set RBFX_SDK_PATH to your rbfx SDK installation directory")
+endif()
 
-# Add include directories for rbfx
-include_directories("${Urho3D_DIR}/../../include")
-include_directories("${Urho3D_DIR}/../../include/Urho3D/ThirdParty")
+# Include rbfx CMake modules
+list(APPEND CMAKE_MODULE_PATH "${RBFX_SDK_PATH}/CMake/Modules")
+include(rbfx)
 
-# UPDATED: Added all implementation source modules to the target executable pool
-add_executable(FighterProject
-    main.cpp
-    Fighter.cpp
-    Zombie.cpp
-    ZombieAI.cpp
-    ZombieManager.cpp
-    CombatSystem.cpp
-    CameraController.cpp
+# Find rbfx package
+find_package(rbfx REQUIRED)
+
+# Source files
+set(SOURCES
+    Source/Main.cpp
 )
 
-target_link_libraries(FighterProject PRIVATE Urho3D)
+# Create executable
+add_executable(${PROJECT_NAME} ${SOURCES})
 
-set_target_properties(FighterProject PROPERTIES 
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+# Link against rbfx
+target_link_libraries(${PROJECT_NAME} rbfx)
+
+# Include directories
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${RBFX_SDK_PATH}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
+
+# Copy rbfx DLLs to output directory on Windows
+if(WIN32)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${RBFX_SDK_PATH}/bin/rbfx.dll"
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    )
+endif()
+
+# Install rules
+install(TARGETS ${PROJECT_NAME} DESTINATION bin)
