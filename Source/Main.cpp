@@ -1,4 +1,4 @@
-// rbfx Third-Person Shooter Example
+// rbfx TPS Style Example
 // Main entry point using rbfx/Urho3D APIs
 
 #include <rbfx/Engine.h>
@@ -13,7 +13,7 @@
 
 using namespace Urho3D;
 
-class TPSGame : public Application
+class TPSStyleGame : public Application
 {
 public:
     TPSGame(Context* context) : Application(context)
@@ -24,7 +24,7 @@ public:
     {
         engineParameters_["FullScreen"] = false;
         engineParameters_["WindowResizable"] = true;
-        engineParameters_["WindowTitle"] = "rbfx TPS Example";
+        engineParameters_["WindowTitle"] = "rbfx TPS Style Example";
     }
 
     void Start() override
@@ -110,4 +110,4 @@ private:
     SharedPtr<Node> playerNode_;
 };
 
-URHO3D_DEFINE_APPLICATION(TPSGame)
+URHO3D_DEFINE_APPLICATION(TPSStyleGame)
