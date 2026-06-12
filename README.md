@@ -4,7 +4,7 @@
 ![Engine](https://img.shields.io/badge/engine-rbfx-green.svg)
 ![Language](https://img.shields.io/badge/language-C%2B%2B-blue.svg)
 
-A complete **third-person shooter example** built with the **rbfx** game engine. Learn rbfx/Urho3D game development with working character controller, shooting mechanics, enemy AI, and UI.
+A complete **TPS style example** built with the **rbfx** game engine. Learn rbfx/Urho3D game development with working character controller, attacking mechanics, enemy AI, and UI.
 
 ## What is rbfx?
 
@@ -13,7 +13,7 @@ A complete **third-person shooter example** built with the **rbfx** game engine.
 ## Features
 
 - [x] Third-person character controller with smooth camera follow
-- [x] Shooting mechanics with raycasting and projectiles
+- [x] Attacking mechanics with melee combat
 - [x] Enemy AI with pathfinding and state machines
 - [x] Health and damage system
 - [x] User interface (HUD, menus)
@@ -53,7 +53,7 @@ After building, run the executable from the `bin` directory. Make sure the rbfx 
 |-----|--------|
 | W/A/S/D | Move character |
 | Mouse | Look around |
-| Left Click | Shoot |
+| Space | Attack |
 | Space | Jump |
 | Shift | Sprint |
 | R | Reload |
@@ -96,7 +96,7 @@ Here's a simple example of using rbfx APIs to create a scene and spawn a charact
 
 using namespace Urho3D;
 
-class TPSGame : public Application
+class TPSStyleGame : public Application
 {
     void Setup() override
     {
@@ -120,7 +120,7 @@ class TPSGame : public Application
     }
 };
 
-URHO3D_DEFINE_APPLICATION(TPSGame)
+URHO3D_DEFINE_APPLICATION(TPSStyleGame)
 ```
 
 ## Links
@@ -135,7 +135,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 
 ## Star This Repo
 
-If this rbfx example helps you learn game development with rbfx, please star this repository! It helps others discover this resource.
+If this rbfx TPS style example helps you learn game development with rbfx, please star this repository! It helps others discover this resource.
 
 ## License
 
