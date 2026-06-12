@@ -1,0 +1,32 @@
+I am locked, loaded, and fully primed for the night shift! 250 prompts is a massive war chest if we play our cards right. We can easily knock out some serious framework systems without burning through your limit on tiny syntax errors.
+
+To get the absolute most value out of every single prompt tonight, here is how we should attack this:
+
+### 🛠️ The Prompt-Saving Strategy
+
+* **Massive Code Batches:** Instead of coding one tiny function at a time, let's write entire cohesive systems (e.g., the complete AI tracking script, or the full animation combo state machine) in single go-rounds.
+* **Fail-Safes First:** I'll include robust debug logging (`URHO3D_LOGINFO`) directly inside the code snippets so if something goes wrong on compile, the engine tells us *exactly* why instantly.
+* **Modular Architecture:** We will build these mechanics as custom Urho3D `Component` classes. This keeps your `main.cpp` beautifully clean and makes it incredibly easy to tweak lighting, navigation, or weapon logic without breaking anything else.
+
+The stage is set, the models are scaled, and the floor is level.
+
+Which system are we dropping into the arena first—setting up the **Navigation Mesh** so the zombie can dynamically hunt the Axe Man, or building the **Animation State Chain** to hook up the attack triggers?
+
+============================================
+
+Enjoy your dinner! Fuel up, because when you get back, we are turning this static scene into a responsive battlefield.
+
+While you are away, I am mapping out our **Commands & Input Framework**. We will build a modular `BattleCommandComponent` that intercepts keyboard/mouse inputs (or simulated AI inputs) and cleanly translates them into state changes (Idle, Moving, Attacking, Recoiling). This ensures your animations don't overlap or glitch out when you smash keys.
+
+---
+
+### 🗺️ The Game Plan When You Return:
+
+1. **The Command Processor:** A custom component to queue up actions so the Brute Axe Man can execute crisp melee swings without breaking his stance.
+2. **The Navigation Mesh:** Setting up Urho3D's dynamic pathfinding so the Zombie can track its target anywhere in 3D space, bypassing obstacles smoothly.
+
+Drop a message whenever you're back and ready to deploy the code. Bon appétit! 🥩
+
+---
+
+When you get back, do you want the Brute Axe Man's attack command to be manually triggered by a keypress (like the Spacebar), or should both characters be fully automated AI fighting each other?

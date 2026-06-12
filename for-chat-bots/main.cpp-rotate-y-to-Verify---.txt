@@ -1,0 +1,155 @@
+#include <Urho3D/Engine/Application.h>
+#include <Urho3D/Engine/EngineDefs.h>
+#include <Urho3D/Graphics/AnimationController.h>
+#include <Urho3D/Graphics/Camera.h>
+#include <Urho3D/Graphics/Light.h>
+#include <Urho3D/Graphics/Material.h>
+#include <Urho3D/Graphics/Model.h>
+#include <Urho3D/Graphics/Octree.h>
+#include <Urho3D/Graphics/Renderer.h>
+#include <Urho3D/Graphics/StaticModel.h>
+#include <Urho3D/Graphics/Viewport.h>
+#include <Urho3D/Graphics/Zone.h>
+#include <Urho3D/Input/InputConstants.h>
+#include <Urho3D/Input/InputEvents.h>
+#include <Urho3D/IO/Log.h>
+#include <Urho3D/Resource/ResourceCache.h>
+#include <Urho3D/Scene/PrefabResource.h>
+#include <Urho3D/Scene/Scene.h>
+#include <Urho3D/Core/CoreEvents.h>
+
+using namespace Urho3D;
+
+class FightScene : public Application {
+    URHO3D_OBJECT(FightScene, Application);
+public:
+    explicit FightScene(Context* context) : Application(context) {}
+
+    void Setup() override {
+        engineParameters_[EP_WINDOW_TITLE] = "rbfx Mixamo Final";
+        engineParameters_[EP_RESOURCE_PATHS] = "Data;CoreData";
+        engineParameters_[EP_FULL_SCREEN] = false;
+        engineParameters_[EP_LOG_NAME] = "Fighter.log";
+    }
+
+    void Start() override {
+        auto* cache = GetSubsystem<ResourceCache>();
+        scene_ = new Scene(context_);
+        scene_->CreateComponent<Octree>();
+
+        // 1. Setup Environment
+        Node* zoneNode = scene_->CreateChild("Zone");
+        auto* zone = zoneNode->CreateComponent<Zone>();
+        zone->SetBoundingBox(BoundingBox(-1000.0f, 1000.0f));
+        zone->SetAmbientColor(Color(0.15f, 0.15f, 0.15f));
+
+        // Dim directional fill light from above-back
+        Node* dirLightNode = scene_->CreateChild("DirLight");
+        dirLightNode->SetDirection(Vector3(0.3f, -1.0f, 0.5f));
+        auto* dirLight = dirLightNode->CreateComponent<Light>();
+        dirLight->SetLightType(LIGHT_DIRECTIONAL);
+        dirLight->SetBrightness(0.3f);
+
+        // 2. Floor
+        Node* floorNode = scene_->CreateChild("Floor");
+        floorNode->SetPosition(Vector3(0.0f, -0.01f, 0.0f));
+        floorNode->SetScale(Vector3(50.0f, 1.0f, 50.0f));
+        auto* floorModel = floorNode->CreateComponent<StaticModel>();
+        floorModel->SetModel(cache->GetResource<Model>("Models/Plane.mdl"));
+        floorModel->SetMaterial(cache->GetResource<Material>("Materials/DefaultGrey.xml"));
+
+        // 3. Load the Fighter Prefab
+        fighterNode_ = scene_->CreateChild("Fighter");
+        auto* prefab = cache->GetResource<PrefabResource>("test.glb.d/Prefab.prefab");
+        
+        if (prefab) {
+            fighterNode_->InstantiatePrefab(prefab);
+            
+            // Play Animation
+            auto* animCtrl = fighterNode_->FindComponent<AnimationController>();
+            if (animCtrl) {
+                animCtrl->PlayExclusive("test.glb.d/Animations/mixamo.com.ani", 0, true, 0.2f);
+            }
+
+            // Transform adjustments
+            fighterNode_->SetRotation(Quaternion(0.0f, -90.0f, 0.0f));
+            fighterNode_->SetScale(1.0f / 3.0f);
+            Vector3 pos = fighterNode_->GetPosition();
+            pos.y_ -= 0.05f;
+            fighterNode_->SetPosition(pos);
+
+        } else {
+            URHO3D_LOGERROR("Could not find test.glb.d/Prefab.prefab in bin/Data!");
+        }
+
+        // 4. Camera Setup
+        cameraNode_ = scene_->CreateChild("Camera");
+        auto* cam = cameraNode_->CreateComponent<Camera>();
+        cameraNode_->SetPosition(Vector3(0.0f, 1.5f, -5.0f));
+        cameraNode_->LookAt(Vector3(0.0f, 1.0f, 0.0f));
+
+        // 5. Watcher's Spotlight (shines from camera onto character)
+        Node* spotLightNode = cameraNode_->CreateChild("SpotLight");
+        spotLightNode->SetPosition(Vector3(0.0f, 0.0f, 0.0f));
+        auto* spotLight = spotLightNode->CreateComponent<Light>();
+        spotLight->SetLightType(LIGHT_SPOT);
+        spotLight->SetBrightness(3.0f);
+        spotLight->SetRange(25.0f);
+        spotLight->SetFov(50.0f);
+        spotLight->SetColor(Color(1.0f, 0.95f, 0.85f));
+
+        GetSubsystem<Renderer>()->SetViewport(0, new Viewport(context_, scene_, cam));
+
+        // Event subscriptions
+        SubscribeToEvent(E_KEYDOWN, &FightScene::HandleKeyDown);
+        SubscribeToEvent(E_KEYUP, &FightScene::HandleKeyUp);
+        SubscribeToEvent(E_UPDATE, &FightScene::HandleUpdate);
+    }
+
+    void HandleUpdate(StringHash eventType, VariantMap& eventData) {
+        if (!fighterNode_) return;
+
+        float timeStep = eventData[Update::P_TIMESTEP].GetFloat();
+        float rotateSpeed = 180.0f; // degrees per second
+
+        if (qHeld_) {
+            fighterNode_->Yaw(rotateSpeed * timeStep, TS_LOCAL);
+        }
+        if (eHeld_) {
+            fighterNode_->Yaw(-rotateSpeed * timeStep, TS_LOCAL);
+        }
+    }
+
+    void HandleKeyDown(StringHash eventType, VariantMap& eventData) {
+        using namespace KeyDown;
+        int key = eventData[P_KEY].GetInt();
+
+        if (key == KEY_ESCAPE) engine_->Exit();
+        if (key == KEY_Q) qHeld_ = true;
+        if (key == KEY_E) eHeld_ = true;
+
+        if (key == KEY_F && cameraNode_) {
+            auto* cam = cameraNode_->GetComponent<Camera>();
+            if (cam) {
+                cam->SetFillMode(cam->GetFillMode() == FILL_WIREFRAME ? FILL_SOLID : FILL_WIREFRAME);
+            }
+        }
+    }
+
+    void HandleKeyUp(StringHash eventType, VariantMap& eventData) {
+        using namespace KeyUp;
+        int key = eventData[P_KEY].GetInt();
+
+        if (key == KEY_Q) qHeld_ = false;
+        if (key == KEY_E) eHeld_ = false;
+    }
+
+private:
+    SharedPtr<Scene> scene_;
+    Node* cameraNode_ = nullptr;
+    Node* fighterNode_ = nullptr;
+    bool qHeld_ = false;
+    bool eHeld_ = false;
+};
+
+URHO3D_DEFINE_APPLICATION_MAIN(FightScene)

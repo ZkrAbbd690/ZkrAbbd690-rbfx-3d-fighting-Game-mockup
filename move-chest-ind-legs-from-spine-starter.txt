@@ -1,0 +1,144 @@
+
+it played fine, as it made me go mad with U3d fork of urho3d, everytime I added a gun to mixamo shooting character , in blender, it no longer displayed the animation, but rbfx has solved this isue nicely and NOW I CAN EDIT MY MIXAMO ANIMATED MODELS IN BLENDER ADD GUNS MUZLE FLASH ETC ...
+But that raises a daunting isue, for third person shooter how do I make a charcter aim with a gun without rotating the entire character , how to I aim just the uper half of the character , has anyone done this before , HOW ON EARTH DO PACKAGES LIKE Unreal Engine or Godot do that ???
+Any idea ??
+
+==========================================================================================================
+
+This is the classic **Third-Person Shooter aiming problem**. Every engine solves it the same fundamental way: **split the skeleton**.
+
+You don't rotate the whole character. You rotate **only the spine/torso bones** so the upper body aims at the target while the lower body keeps playing walk/strafe animations in the movement direction.
+
+Here's how the big engines do it, and exactly how to do it in **rbfx**:
+
+---
+
+## How Unreal / Godot / Unity do it
+
+| Engine | Technique |
+|--------|-----------|
+| **Unreal** | **Aim Offset** (blendspace for look up/down) + **Layered Animations** with **Bone Masks** + **IK** on hands |
+| **Godot** | **AnimationTree** with blend nodes + **BoneAttachment** nodes + additive animations |
+| **Unity** | **Avatar Masks** + **Animation Layers** + **IK Pass** |
+
+The common pattern is always:
+1. **Lower body** → movement direction (walk, strafe)
+2. **Upper body** → aim direction (spine, chest, arms, head)
+3. **IK** → snap hands to gun grip / align gun barrel
+
+---
+
+## How to do it in rbfx
+
+rbfx has exactly what you need built into `AnimationController`:
+
+### 1. Animation Layers + `StartBone`
+rbfx's `AnimationParameters` has a **`StartBone()`** method. This lets you play an animation on **only a subtree of the skeleton** (e.g., from the spine down to the head/arms).
+
+```cpp
+auto* animCtrl = fighterNode_->GetComponent<AnimationController>();
+
+// Layer 0: Full body locomotion (walking, running)
+animCtrl->PlayNew(AnimationParameters{context_, "walk.ani"}.Layer(0).Looped(true));
+
+// Layer 1: Upper body aim animation, restricted to spine and children
+// This means legs/hips ignore this animation completely!
+animCtrl->PlayNew(AnimationParameters{context_, "aim_center.ani"}
+    .Layer(1)
+    .StartBone("Spine2")   // <-- KEY: only affects Spine2 → Chest → Arms → Head
+    .Looped(true)
+    .Weight(1.0f));
+```
+
+If you don't have a separate "aim" animation, you can use the **idle animation** on the upper body layer — the procedural spine rotation (below) will do the actual aiming.
+
+### 2. Procedural Spine Rotation (The "Aim Offset")
+In your `Update()` or `HandleScenePostUpdate`, rotate the spine bones toward the camera/aim direction:
+
+```cpp
+void FightScene::Update(float timeStep) {
+    // Get the AnimatedModel
+    auto* animatedModel = fighterNode_->GetComponent<AnimatedModel>();
+    if (!animatedModel) return;
+    
+    Skeleton& skeleton = animatedModel->GetSkeleton();
+    
+    // Find the spine bone (names vary: Spine, Spine1, Spine2, Chest)
+    Bone* spine = skeleton.GetBone("Spine2");
+    if (!spine) spine = skeleton.GetBone("Spine1");
+    if (!spine) spine = skeleton.GetBone("Spine");
+    
+    if (spine && spine->node_) {
+        // Get aim direction from camera or mouse ray
+        Vector3 aimDir = cameraNode_->GetWorldDirection();
+        
+        // Flatten to horizontal plane for spine yaw (optional)
+        Vector3 aimDirHorizontal(aimDir.x_, 0.0f, aimDir.z_);
+        aimDirHorizontal.Normalize();
+        
+        // Calculate yaw difference between hips and aim
+        Quaternion hipsRot = fighterNode_->GetWorldRotation();
+        Vector3 hipsForward = hipsRot * Vector3::FORWARD;
+        Vector3 hipsForwardHorizontal(hipsForward.x_, 0.0f, hipsForward.z_);
+        hipsForwardHorizontal.Normalize();
+        
+        float yawAngle = Atan2(
+            hipsForwardHorizontal.CrossProduct(aimDirHorizontal).y_,
+            hipsForwardHorizontal.DotProduct(aimDirHorizontal)
+        );
+        
+        // Clamp to realistic spine twist (humans can't turn 180° at the waist!)
+        yawAngle = Clamp(yawAngle, -M_PI * 0.6f, M_PI * 0.6f); // ±108 degrees
+        
+        // Pitch (look up/down)
+        float pitchAngle = -Asin(aimDir.y_); // negative because model space
+        pitchAngle = Clamp(pitchAngle, -M_PI * 0.4f, M_PI * 0.4f); // ±72 degrees
+        
+        // Apply rotation to spine bone node
+        // This is applied ON TOP of the animation
+        Quaternion spineRot(pitchAngle, yawAngle, 0.0f);
+        spine->node_->SetRotation(spineRot);
+    }
+}
+```
+
+### 3. Two-Bone IK for Arms (Advanced)
+If you want the hands to perfectly align with the gun:
+- rbfx doesn't have a built-in Two-Bone IK component like Unreal, but you can implement it manually by rotating the shoulder/elbow bones, or...
+- Use the `StartBone` trick: make your "aim" animation actually be an **additive animation** that raises the arms into a rifle-holding pose, then apply it to the arm/clavicle bones.
+
+```cpp
+// Additive aim pose on arms only
+animCtrl->PlayNew(AnimationParameters{context_, "rifle_aim_pose.ani"}
+    .Layer(2)
+    .StartBone("RightClavicle")
+    .Additive(true)
+    .Weight(1.0f));
+```
+
+---
+
+## Recommended rbfx Setup for TPS
+
+```
+Layer 0: walk/run/strafe (full body, base layer)
+Layer 1: spine rotation via StartBone("Spine2") 
+         → idle/aim animation that keeps upper body stable
+Layer 2: additive recoil/fire animation on arms (StartBone("RightClavicle"))
+```
+
+Then in code:
+- **Movement** → rotate the whole `fighterNode_` to face movement direction
+- **Aiming** → rotate only the **spine bone** to face camera/aim direction
+- **Firing** → play additive recoil animation on arms
+
+---
+
+## Quick Checklist
+
+1. **Find your spine bone name** — open the model in the rbfx Editor, look at the skeleton hierarchy. It's usually `Spine`, `Spine1`, `Spine2`, or `Chest`.
+2. **Make sure your Mixamo rig has a clean spine hierarchy** — if the FBX2glTF conversion flattened the skeleton, bone names might be weird.
+3. **Clamp the angles** — don't let the spine twist 180°; it looks broken.
+4. **Use `StartBone`** — this is the rbfx feature that makes this trivial. Without it, you'd have to manually mask bones.
+
+Want me to write a complete `FightScene::Update()` that handles **WASD movement + mouse aim with spine rotation**?

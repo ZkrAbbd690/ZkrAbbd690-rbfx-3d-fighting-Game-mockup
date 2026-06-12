@@ -1,0 +1,528 @@
+# AI Implementation: Multiple Zombies with Death on Hit (TPS Mode Only)
+
+I'll implement a zombie AI system with multiple zombies that attack the fighter and die upon being hit, active only in TPS mode.
+
+## New File: `ZombieAI.h`
+
+```cpp
+#pragma once
+#include "Zombie.h"
+#include "Fighter.h"
+#include <Urho3D/Container/Vector.h>
+
+using namespace Urho3D;
+
+enum class ZombieAIState
+{
+    IDLE,
+    PURSUING,
+    ATTACKING,
+    DEAD
+};
+
+class ZombieAI : public Component
+{
+    URHO3D_OBJECT(ZombieAI, Component);
+
+public:
+    ZombieAI(Context* context);
+    ~ZombieAI() override = default;
+
+    static void RegisterObject(Context* context);
+
+    void Initialize(Zombie* zombie, Fighter* target);
+    void Update(float timeStep);
+    void Kill();
+    void Reset();
+
+    bool IsDead() const { return currentState_ == ZombieAIState::DEAD; }
+    bool IsActive() const { return isActive_; }
+    void SetActive(bool active) { isActive_ = active; }
+
+private:
+    void UpdatePursuing(float timeStep);
+    void UpdateAttacking(float timeStep);
+    void TransitionTo(ZombieAIState newState);
+
+    WeakPtr<Zombie> zombie_;
+    WeakPtr<Fighter> target_;
+    
+    ZombieAIState currentState_{ZombieAIState::IDLE};
+    bool isActive_{true};  // Only active in TPS mode
+    
+    // AI parameters
+    static constexpr float PURSUE_RANGE = 15.0f;
+    static constexpr float ATTACK_RANGE = 0.94f;
+    static constexpr float ROTATION_SPEED = 180.0f;  // degrees/sec
+};
+```
+
+## New File: `ZombieAI.cpp`
+
+```cpp
+#include "ZombieAI.h"
+#include <Urho3D/IO/Log.h>
+#include <Urho3D/Math/MathDefs.h>
+
+ZombieAI::ZombieAI(Context* context) : Component(context)
+{
+}
+
+void ZombieAI::RegisterObject(Context* context)
+{
+    context->RegisterFactory<ZombieAI>();
+}
+
+void ZombieAI::Initialize(Zombie* zombie, Fighter* target)
+{
+    zombie_ = zombie;
+    target_ = target;
+    currentState_ = ZombieAIState::IDLE;
+    isActive_ = true;
+    
+    URHO3D_LOGINFO("[ZOMBIE-AI] Initialized");
+}
+
+void ZombieAI::Update(float timeStep)
+{
+    if (!zombie_ || !target_) return;
+    
+    // Only active in TPS mode
+    if (!isActive_)
+    {
+        if (currentState_ != ZombieAIState::IDLE)
+            TransitionTo(ZombieAIState::IDLE);
+        return;
+    }
+    
+    if (currentState_ == ZombieAIState::DEAD) return;
+    
+    // Check if fighter is in SIDE mode - if so, deactivate
+    if (target_->GetMoveMode() == MoveMode::SIDE)
+    {
+        isActive_ = false;
+        return;
+    }
+    
+    Vector3 zombiePos = zombie_->GetPosition();
+    Vector3 targetPos = target_->GetPosition();
+    float distance = (targetPos - zombiePos).Length();
+    
+    // State machine
+    switch (currentState_)
+    {
+        case ZombieAIState::IDLE:
+            if (distance < PURSUE_RANGE)
+                TransitionTo(ZombieAIState::PURSUING);
+            break;
+            
+        case ZombieAIState::PURSUING:
+            if (distance < ATTACK_RANGE)
+                TransitionTo(ZombieAIState::ATTACKING);
+            else if (distance > PURSUE_RANGE)
+                TransitionTo(ZombieAIState::IDLE);
+            else
+                UpdatePursuing(timeStep);
+            break;
+            
+        case ZombieAIState::ATTACKING:
+            if (distance > ATTACK_RANGE * 1.5f)
+                TransitionTo(ZombieAIState::PURSUING);
+            else
+                UpdateAttacking(timeStep);
+            break;
+            
+        case ZombieAIState::DEAD:
+            break;
+    }
+}
+
+void ZombieAI::UpdatePursuing(float timeStep)
+{
+    if (!zombie_ || !target_) return;
+    
+    Vector3 zombiePos = zombie_->GetPosition();
+    Vector3 targetPos = target_->GetPosition();
+    
+    // Direction to target (XZ plane only)
+    Vector3 toTarget = targetPos - zombiePos;
+    toTarget.y_ = 0.0f;
+    float distance = toTarget.Length();
+    
+    if (distance < 0.01f) return;
+    
+    toTarget.Normalize();
+    
+    // Rotate zombie to face target
+    Node* zombieNode = zombie_->GetNode();
+    if (zombieNode)
+    {
+        Quaternion currentRot = zombieNode->GetRotation();
+        Vector3 currentDir = currentRot * Vector3::FORWARD;
+        currentDir.y_ = 0.0f;
+        currentDir.Normalize();
+        
+        // Calculate target rotation
+        float targetYaw = Atan2(toTarget.x_, toTarget.z_);
+        float currentYaw = Atan2(currentDir.x_, currentDir.z_);
+        
+        // Smooth rotation
+        float yawDiff = targetYaw - currentYaw;
+        // Normalize to -PI to PI
+        while (yawDiff > M_PI) yawDiff -= M_TWOPI;
+        while (yawDiff < -M_PI) yawDiff += M_TWOPI;
+        
+        float rotAmount = Clamp(yawDiff, -ROTATION_SPEED * timeStep * M_DEGTORAD, 
+                                          ROTATION_SPEED * timeStep * M_DEGTORAD);
+        
+        Quaternion rot(rotAmount * M_RADTODEG, Vector3::UP);
+        zombieNode->SetRotation(rot * currentRot);
+    }
+    
+    // Movement handled by Zombie's FixedUpdate - just ensure it's not frozen
+    if (zombie_->IsFrozen())
+        zombie_->Reset();
+}
+
+void ZombieAI::UpdateAttacking(float timeStep)
+{
+    if (!zombie_ || !target_) return;
+    
+    // Face target
+    Vector3 zombiePos = zombie_->GetPosition();
+    Vector3 targetPos = target_->GetPosition();
+    Vector3 toTarget = targetPos - zombiePos;
+    toTarget.y_ = 0.0f;
+    toTarget.Normalize();
+    
+    Node* zombieNode = zombie_->GetNode();
+    if (zombieNode)
+    {
+        float targetYaw = Atan2(toTarget.x_, toTarget.z_);
+        zombieNode->SetRotation(Quaternion(targetYaw * M_RADTODEG, Vector3::UP));
+    }
+    
+    // Trigger contact freeze to simulate attack
+    zombie_->ApplyBoundaryFreeze();
+}
+
+void ZombieAI::TransitionTo(ZombieAIState newState)
+{
+    if (currentState_ == newState) return;
+    
+    URHO3D_LOGINFOF("[ZOMBIE-AI] State: %d -> %d", (int)currentState_, (int)newState);
+    currentState_ = newState;
+    
+    if (newState == ZombieAIState::DEAD && zombie_)
+    {
+        zombie_->HandleHit(target_);
+    }
+}
+
+void ZombieAI::Kill()
+{
+    TransitionTo(ZombieAIState::DEAD);
+}
+
+void ZombieAI::Reset()
+{
+    currentState_ = ZombieAIState::IDLE;
+    isActive_ = true;
+}
+```
+
+## New File: `ZombieManager.h`
+
+```cpp
+#pragma once
+#include <Urho3D/Scene/Component.h>
+#include "Zombie.h"
+#include "ZombieAI.h"
+#include "Fighter.h"
+
+using namespace Urho3D;
+
+class ZombieManager : public Component
+{
+    URHO3D_OBJECT(ZombieManager, Component);
+
+public:
+    ZombieManager(Context* context);
+    ~ZombieManager() override = default;
+
+    static void RegisterObject(Context* context);
+
+    void Initialize(Scene* scene, Fighter* fighter, int zombieCount = 5);
+    void Update(float timeStep);
+    void Reset();
+    void CheckFighterCollisions();
+
+    int GetAliveCount() const;
+    int GetTotalCount() const { return zombies_.size(); }
+
+private:
+    struct ZombieEntry
+    {
+        SharedPtr<Node> node;
+        SharedPtr<Zombie> zombie;
+        SharedPtr<ZombieAI> ai;
+        Vector3 spawnPosition;
+    };
+
+    void SpawnZombie(const Vector3& position);
+    void UpdateModeState();
+
+    ea::vector<ZombieEntry> zombies_;
+    WeakPtr<Scene> scene_;
+    WeakPtr<Fighter> fighter_;
+    
+    bool isSideMode_{false};
+};
+```
+
+## New File: `ZombieManager.cpp`
+
+```cpp
+#include "ZombieManager.h"
+#include <Urho3D/IO/Log.h>
+#include <Urho3D/Resource/ResourceCache.h>
+#include <Urho3D/Scene/Scene.h>
+#include <Urho3D/Math/Random.h>
+
+ZombieManager::ZombieManager(Context* context) : Component(context)
+{
+}
+
+void ZombieManager::RegisterObject(Context* context)
+{
+    context->RegisterFactory<ZombieManager>();
+}
+
+void ZombieManager::Initialize(Scene* scene, Fighter* fighter, int zombieCount)
+{
+    scene_ = scene;
+    fighter_ = fighter;
+    
+    if (!scene || !fighter)
+    {
+        URHO3D_LOGERROR("[ZOMBIE-MGR] Invalid scene or fighter!");
+        return;
+    }
+    
+    // Spawn zombies in a circle around the arena
+    Vector3 arenaCenter(0.59f, 0.0f, 1.6f);
+    float spawnRadius = 8.0f;
+    
+    for (int i = 0; i < zombieCount; ++i)
+    {
+        float angle = (float)i / (float)zombieCount * M_TWOPI;
+        Vector3 spawnPos = arenaCenter + Vector3(
+            Cos(angle) * spawnRadius,
+            0.0f,
+            Sin(angle) * spawnRadius
+        );
+        
+        SpawnZombie(spawnPos);
+    }
+    
+    URHO3D_LOGINFOF("[ZOMBIE-MGR] Spawned %d zombies", zombieCount);
+}
+
+void ZombieManager::SpawnZombie(const Vector3& position)
+{
+    if (!scene_) return;
+    
+    ZombieEntry entry;
+    entry.spawnPosition = position;
+    
+    // Create zombie node
+    entry.node = scene_->CreateChild("ZombiePivot");
+    entry.node->SetPosition(position);
+    
+    // Create zombie component
+    entry.zombie = entry.node->CreateComponent<Zombie>();
+    entry.zombie->Initialize(entry.node, 
+        "firing-running-didn'twork/test_out/test.gltf.d/Prefab.prefab");
+    entry.zombie->SetFighter(fighter_);
+    
+    // Create AI component
+    entry.ai = entry.node->CreateComponent<ZombieAI>();
+    entry.ai->Initialize(entry.zombie, fighter_);
+    
+    zombies_.push_back(entry);
+}
+
+void ZombieManager::Update(float timeStep)
+{
+    UpdateModeState();
+    
+    // Update all zombie AIs
+    for (auto& entry : zombies_)
+    {
+        if (entry.ai && !entry.ai->IsDead())
+        {
+            entry.ai->Update(timeStep);
+        }
+    }
+    
+    // Check collisions with fighter
+    CheckFighterCollisions();
+}
+
+void ZombieManager::UpdateModeState()
+{
+    if (!fighter_) return;
+    
+    bool newSideMode = (fighter_->GetMoveMode() == MoveMode::SIDE);
+    
+    if (newSideMode != isSideMode_)
+    {
+        isSideMode_ = newSideMode;
+        
+        // Deactivate all zombies in SIDE mode
+        for (auto& entry : zombies_)
+        {
+            if (entry.ai)
+            {
+                entry.ai->SetActive(!isSideMode_);
+            }
+            if (entry.zombie && isSideMode_)
+            {
+                // Freeze zombies in SIDE mode
+                entry.zombie->ApplyBoundaryFreeze();
+            }
+        }
+        
+        URHO3D_LOGINFOF("[ZOMBIE-MGR] Mode changed: TPS_AI=%s", 
+            isSideMode_ ? "OFF" : "ON");
+    }
+}
+
+void ZombieManager::CheckFighterCollisions()
+{
+    if (!fighter_ || isSideMode_) return;
+    
+    // Only check during fighter's swing
+    if (!fighter_->IsMidSwing()) return;
+    
+    Vector3 fighterPos = fighter_->GetPosition();
+    float swingRange = 1.4f;
+    
+    for (auto& entry : zombies_)
+    {
+        if (!entry.zombie || !entry.ai) continue;
+        if (entry.ai->IsDead()) continue;
+        
+        Vector3 zombiePos = entry.zombie->GetPosition();
+        float distance = (fighterPos - zombiePos).Length();
+        
+        if (distance < swingRange)
+        {
+            // Kill the zombie
+            entry.ai->Kill();
+            
+            URHO3D_LOGINFOF("[ZOMBIE-MGR] Zombie killed at distance %.2f", distance);
+        }
+    }
+}
+
+void ZombieManager::Reset()
+{
+    for (auto& entry : zombies_)
+    {
+        if (entry.zombie)
+        {
+            entry.node->SetPosition(entry.spawnPosition);
+            entry.zombie->Reset();
+        }
+        if (entry.ai)
+        {
+            entry.ai->Reset();
+        }
+    }
+    
+    URHO3D_LOGINFO("[ZOMBIE-MGR] All zombies reset");
+}
+
+int ZombieManager::GetAliveCount() const
+{
+    int count = 0;
+    for (const auto& entry : zombies_)
+    {
+        if (entry.ai && !entry.ai->IsDead())
+            ++count;
+    }
+    return count;
+}
+```
+
+## Updated `main.cpp` Integration
+
+Add these changes to your existing `main.cpp`:
+
+```cpp
+// At top with other includes
+#include "ZombieManager.h"
+#include "ZombieAI.h"
+
+// In main(), after RegisterFactory calls:
+context->RegisterFactory<ZombieAI>();
+context->RegisterFactory<ZombieManager>();
+
+// Replace single zombie creation with ZombieManager:
+// DELETE the old zombie creation code:
+// Node* zombiePivot = scene->CreateChild("ZombiePivot");
+// ...
+
+// ADD instead:
+URHO3D_LOGINFO("[MAIN] Creating ZombieManager...");
+Node* zombieMgrNode = scene->CreateChild("ZombieManagerNode");
+auto* zombieManager = zombieMgrNode->CreateComponent<ZombieManager>();
+zombieManager->Initialize(scene, fighterComponent, 5);  // 5 zombies
+
+// Update CombatSystem initialization to use first zombie (for backwards compatibility):
+// You can keep the single zombie in CombatSystem for bite mechanics
+// or modify CombatSystem to work with ZombieManager
+
+// In main loop, before combatSystem->UpdateCombat():
+zombieManager->Update(dt);
+
+// Update reset key (SPACE) to also reset zombies:
+if (input->GetKeyPress(KEY_SPACE))
+{
+    URHO3D_LOGINFO("[MAIN] SPACE pressed");
+    if (combatSystem->IsArenaHitFrozen()) 
+    {
+        combatSystem->ResetSimulation();
+        zombieManager->Reset();  // ADD THIS
+    }
+    else 
+        combatSystem->HandleManualAttack();
+}
+
+// Add zombie count display to status log:
+if (statusTimer >= 2.0f)
+{
+    statusTimer = 0.0f;
+    if (fighterComponent) {
+        URHO3D_LOGINFOF("[MAIN-STATUS] Fighter: pos=%s yaw=%.1f mode=%s zombies_alive=%d/%d",
+            fighterComponent->GetPosition().ToString().c_str(),
+            fighterComponent->GetTpsYaw(),
+            fighterComponent->GetMoveMode() == MoveMode::TPS ? "TPS" : "SIDE",
+            zombieManager->GetAliveCount(),
+            zombieManager->GetTotalCount());
+    }
+}
+```
+
+## Key Features
+
+1. **Multiple Zombies**: Spawns 5 zombies in a circle around the arena
+2. **AI States**: IDLE → PURSUING → ATTACKING → DEAD
+3. **TPS Mode Only**: Zombies only active when fighter is in TPS mode
+4. **Death on Hit**: Zombies die when hit during fighter's swing (mid-swing window)
+5. **Smart Pursuit**: Zombies rotate to face and pursue the fighter
+6. **Reset Support**: All zombies reset on SPACE key press
+7. **Mode Awareness**: Automatically deactivates in SIDE mode
+
+The system integrates cleanly with your existing code while adding proper multi-zombie AI that respects your TPS/SIDE mode distinction.

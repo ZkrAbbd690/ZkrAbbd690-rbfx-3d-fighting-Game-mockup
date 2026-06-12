@@ -1,0 +1,407 @@
+﻿#include <Urho3D/Urho3D.h>
+#include <Urho3D/Engine/Engine.h>
+#include <Urho3D/Engine/EngineDefs.h>
+#include <Urho3D/Graphics/AnimatedModel.h>
+#include <Urho3D/Graphics/AnimationController.h>
+#include <Urho3D/Graphics/Camera.h>
+#include <Urho3D/Graphics/Light.h>
+#include <Urho3D/Graphics/Model.h>
+#include <Urho3D/Graphics/Octree.h>
+#include <Urho3D/Graphics/Renderer.h>
+#include <Urho3D/Graphics/StaticModel.h>
+#include <Urho3D/Graphics/Viewport.h>
+#include <Urho3D/Graphics/Zone.h>
+#include <Urho3D/IO/Log.h>
+#include <Urho3D/Resource/ResourceCache.h>
+#include <Urho3D/Scene/Scene.h>
+#include <Urho3D/Scene/PrefabResource.h>
+#include <Urho3D/Graphics/Material.h>
+#include <Urho3D/Input/Input.h>
+#include <Urho3D/Graphics/GraphicsDefs.h>
+#include <Urho3D/UI/Text.h>
+#include <Urho3D/UI/UI.h>
+#include <Urho3D/UI/Font.h> 
+#include <Urho3D/Resource/XMLFile.h>
+#include <Urho3D/Core/StringUtils.h> 
+#include <Urho3D/Core/Timer.h>
+
+#include <cstring>
+
+using namespace Urho3D;
+
+int main(int argc, char** argv)
+{
+    SharedPtr<Context> context(new Context());
+    SharedPtr<Engine> engine(new Engine(context));
+
+    StringVariantMap engineParameters;
+    engineParameters[EP_WINDOW_TITLE] = "Kilo-Code Battle Arena: Calibrated Fight Scene";
+    engineParameters[EP_RESOURCE_PREFIX_PATHS] = "Data";
+    engineParameters[EP_FULL_SCREEN] = false;
+    engineParameters[EP_WINDOW_WIDTH] = 1152;
+    engineParameters[EP_WINDOW_HEIGHT] = 864;
+    engineParameters[EP_MULTI_SAMPLE] = 1;
+    engineParameters[EP_VSYNC] = true; 
+
+    if (!engine->Initialize(engineParameters, {}))
+    {
+        URHO3D_LOGERROR("Could not initialise the engine.");
+        return 1;
+    }
+
+    auto* renderer = engine->GetSubsystem<Renderer>();
+    auto* cache    = engine->GetSubsystem<ResourceCache>();
+    auto* input    = engine->GetSubsystem<Input>();
+    auto* ui       = engine->GetSubsystem<UI>();
+    auto* time     = engine->GetSubsystem<Time>();
+
+    auto* font = cache->GetResource<Font>("Fonts/Anonymous Pro.ttf");
+    auto* debugText = ui->GetRoot()->CreateChild<Text>();
+    if (font && debugText)
+    {
+        debugText->SetText("SPACEBAR: ATTACK / RESPAWN IF FROZEN | W/S: ZOOM | A/D: ORBIT");
+        debugText->SetFont(font, 16);
+        debugText->SetColor(Color::GREEN);
+        debugText->SetHorizontalAlignment(HA_CENTER);
+        debugText->SetVerticalAlignment(VA_TOP);
+    }
+
+    SharedPtr<Scene> scene(new Scene(context));
+    scene->CreateComponent<Octree>();
+
+    auto* z = scene->CreateComponent<Zone>();
+    z->SetBoundingBox(BoundingBox(-1000.0f, 1000.0f));
+    z->SetAmbientColor(Color(0.35f, 0.35f, 0.35f));
+    z->SetFogColor(Color(0.55f, 0.55f, 0.55f));
+    z->SetFogStart(150.0f);
+    z->SetFogEnd(250.0f);
+
+    Node* l = scene->CreateChild("KeyLight");
+    l->SetDirection(Vector3(0.2f, -0.8f, 0.5f));
+    auto* dl = l->CreateComponent<Light>();
+    dl->SetLightType(LIGHT_DIRECTIONAL);
+    dl->SetColor(Color(0.8f, 0.784f, 0.76f));
+    dl->SetBrightness(0.72f);
+    dl->SetCastShadows(false);
+
+    Node* fillLightNode = scene->CreateChild("FillLight");
+    fillLightNode->SetDirection(Vector3(-0.4f, -0.6f, -0.2f));
+    auto* fillLight = fillLightNode->CreateComponent<Light>();
+    fillLight->SetLightType(LIGHT_DIRECTIONAL);
+    fillLight->SetColor(Color(0.4f, 0.4f, 0.44f));
+    fillLight->SetBrightness(0.32f);
+
+    auto* cameraNode = scene->CreateChild("Camera");
+    cameraNode->SetPosition(Vector3(0.0f, 1.2f, -3.5f)); 
+    cameraNode->LookAt(Vector3(0.0f, 0.6f, 1.6f));
+    auto* camera = cameraNode->CreateComponent<Camera>();
+
+    Node* camLightNode = scene->CreateChild("ViewerLight");
+    camLightNode->SetPosition(cameraNode->GetPosition());
+    camLightNode->SetRotation(cameraNode->GetRotation());
+    auto* camLight = camLightNode->CreateComponent<Light>();
+
+    camLight->SetLightType(LIGHT_SPOT);
+    camLight->SetColor(Color(1.2f, 1.12f, 1.04f));
+    camLight->SetBrightness(3.2f);
+    camLight->SetRange(40.0f);
+    camLight->SetFov(72.0f);
+    camLight->SetCastShadows(false);
+
+    SharedPtr<Viewport> viewport(new Viewport(context, scene, camera));
+    renderer->SetViewport(0, viewport);
+
+    auto* axeManPivot = scene->CreateChild("AxeManPivot");
+    axeManPivot->SetPosition(Vector3(0.59f, 0.0f, 1.6f)); 
+    axeManPivot->SetRotation(Quaternion::IDENTITY); 
+
+    auto* axeManNode = axeManPivot->CreateChild("AxeManMesh");
+    auto* axePrefab = cache->GetResource<PrefabResource>("test.glb.d/Prefab.prefab");
+
+    AnimationController* axeAnimCtrl = nullptr;
+
+    if (axePrefab)
+    {
+        axeManNode->InstantiatePrefab(axePrefab);
+        URHO3D_LOGINFO("Axe Man Prefab instantiated successfully.");
+
+        axeManNode->SetRotation(Quaternion(0.0f, -90.0f, 0.0f));
+        axeManNode->SetScale(5.0f / 9.0f);
+        Vector3 pos = axeManNode->GetPosition();
+        pos.y_ -= 0.05f; 
+        axeManNode->SetPosition(pos);
+
+        auto* animatedModel = axeManNode->FindComponent<AnimatedModel>();
+        if (animatedModel)
+        {
+            animatedModel->SetUpdateInvisible(false);
+            Skeleton& skeleton = animatedModel->GetSkeleton();
+            Bone* rightHandBone = skeleton.GetBone("RightHand");
+
+            if (rightHandBone && rightHandBone->node_)
+            {
+                URHO3D_LOGINFO("RightHand bone found -- reparenting BattleAxe...");
+                ea::vector<Node*> allDescendants;
+                ea::vector<Node*> stack;
+                stack.push_back(axeManNode);
+                while (!stack.empty())
+                {
+                    Node* current = stack.back();
+                    stack.pop_back();
+                    for (Node* child : current->GetChildren())
+                    {
+                        allDescendants.push_back(child);
+                        stack.push_back(child);
+                    }
+                }
+
+                for (Node* child : allDescendants)
+                {
+                    auto* sm = child->GetComponent<StaticModel>();
+                    if (!sm) continue;
+                    Model* mdl = sm->GetModel();
+                    if (!mdl) continue;
+
+                    const char* mdlName = mdl->GetName().c_str();
+                    if (std::strstr(mdlName, "BattleAxe") == nullptr) continue;
+
+                    Vector3 worldPos = child->GetWorldPosition();
+                    Quaternion worldRot = child->GetWorldRotation();
+                    child->SetParent(rightHandBone->node_);
+                    Quaternion handInv = rightHandBone->node_->GetWorldRotation().Inverse();
+                    child->SetPosition(handInv * (worldPos - rightHandBone->node_->GetWorldPosition()));
+                    child->SetRotation(handInv * worldRot);
+                }
+            }
+        }
+
+        axeAnimCtrl = axeManNode->FindComponent<AnimationController>();
+    }
+    else
+    {
+        URHO3D_LOGERROR("Could not find test.glb.d/Prefab.prefab!");
+        engine->Exit();
+        return 2;
+    }
+
+    auto* zombiePivot = scene->CreateChild("ZombiePivot");
+    const Vector3 zombieStartPos(-2.0f, 0.0f, 1.6f);
+    zombiePivot->SetPosition(zombieStartPos); 
+    zombiePivot->SetRotation(Quaternion(0.0f, 90.0f, 0.0f)); 
+
+    auto* zombieNode = zombiePivot->CreateChild("ZombieMesh");
+
+    {
+        Node* zGlowNode = zombieNode->CreateChild("ZombieGlowLight");
+        zGlowNode->SetPosition(Vector3(0.0f, 1.0f, 0.0f));
+        auto* zGlow = zGlowNode->CreateComponent<Light>();
+        zGlow->SetLightType(LIGHT_POINT);
+        zGlow->SetColor(Color(0.96f, 0.88f, 0.8f));
+        zGlow->SetBrightness(1.44f);
+        zGlow->SetRange(12.0f);
+        zGlow->SetCastShadows(false);
+    }
+
+    const ea::string zombieRoot = "firing-running-didn'twork/test_out/test.gltf.d/"; 
+    auto* zombiePrefab = cache->GetResource<PrefabResource>(zombieRoot + "Prefab.prefab");
+    const ea::string zombieAnimPath = zombieRoot + "Animations/mixamo.com.ani";
+
+    AnimationController* zombieAnimCtrl = nullptr;
+
+    if (zombiePrefab)
+    {
+        zombieNode->InstantiatePrefab(zombiePrefab);
+        zombieAnimCtrl = zombieNode->FindComponent<AnimationController>();
+        if (zombieAnimCtrl)
+        {
+            if (zombieAnimCtrl->Play(zombieAnimPath, 0, true, 0.0f))
+            {
+                zombieAnimCtrl->SetSpeed(zombieAnimPath, 0.5f); 
+            }
+        }
+        zombieNode->SetRotation(Quaternion::IDENTITY);
+        zombieNode->SetScale(75.0f); 
+        zombieNode->SetPosition(Vector3::ZERO);
+
+        auto* zombieAnimatedModel = zombieNode->FindComponent<AnimatedModel>();
+        if (zombieAnimatedModel)
+            zombieAnimatedModel->SetUpdateInvisible(false);
+    }
+
+    // ========================================================================
+    //  COMBAT ENGINE STATE FIELDS
+    // ========================================================================
+    bool arenaHitFrozen = false;
+    float axeManSwingTimer = 0.0f;
+    bool isAxeSwinging = false;
+    const ea::string axeAnimPath = "test.glb.d/Animations/mixamo.com.ani";
+
+    // ADDED: Contact-freeze state for zombie auto-respawn
+    bool zombieContactFrozen = false;
+    float zombieFreezeTimer = 0.0f;
+
+    while (!engine->IsExiting())
+    {
+        engine->RunFrame();
+        float dt = time->GetTimeStep();
+
+        // 1. Check for State Resets (Spacebar if frozen)
+        if (input->GetKeyPress(KEY_SPACE) && arenaHitFrozen)
+        {
+            arenaHitFrozen = false;
+            isAxeSwinging = false;
+            axeManSwingTimer = 0.0f;
+
+            // ADDED: Also clear contact freeze so manual reset works cleanly
+            zombieContactFrozen = false;
+            zombieFreezeTimer = 0.0f;
+
+            // Reset Zombie Position & Restart Animation
+            zombiePivot->SetPosition(zombieStartPos);
+            if (zombieAnimCtrl)
+            {
+                zombieAnimCtrl->StopAll();
+                zombieAnimCtrl->Play(zombieAnimPath, 0, true, 0.0f);
+                zombieAnimCtrl->SetTime(zombieAnimPath, 0.0f);
+                zombieAnimCtrl->SetSpeed(zombieAnimPath, 0.5f);
+            }
+
+            if (axeAnimCtrl) axeAnimCtrl->StopAll();
+
+            if (debugText)
+            {
+                debugText->SetText("STAGE ACTIVE: RUNNING...");
+                debugText->SetColor(Color::GREEN);
+            }
+            URHO3D_LOGINFO("--- ARENA RESET: SIMULATION RESTARTED ---");
+            continue; 
+        }
+
+        // 2. Tracks Single Execution Window for manual Axe Smash
+        if (isAxeSwinging && !arenaHitFrozen)
+        {
+            axeManSwingTimer += dt;
+            if (axeManSwingTimer > 1.0f) 
+            {
+                isAxeSwinging = false;
+                axeManSwingTimer = 0.0f;
+                if (axeAnimCtrl) axeAnimCtrl->StopAll();
+            }
+        }
+
+        // 3. Command Input Processing Hook (Space Bar Hit Input)
+        if (input->GetKeyPress(KEY_SPACE) && !isAxeSwinging && !arenaHitFrozen)
+        {
+            isAxeSwinging = true;
+            axeManSwingTimer = 0.0f;
+
+            if (axeAnimCtrl)
+            {
+                axeAnimCtrl->StopAll();
+                axeAnimCtrl->Play(axeAnimPath, 0, false, 0.0f); 
+                axeAnimCtrl->SetSpeed(axeAnimPath, 1.8f);
+            }
+        }
+
+        // Precise Continuous Strike Frame Verification
+        // CHANGED: Disable axe-hit detection while zombie is in contact-freeze
+        if (isAxeSwinging && !arenaHitFrozen && !zombieContactFrozen)
+        {
+            if (axeManSwingTimer >= 0.25f && axeManSwingTimer <= 0.45f)
+            {
+                float strikeRange = (axeManPivot->GetPosition() - zombiePivot->GetPosition()).Length();
+                if (strikeRange < 0.85f)
+                {
+                    arenaHitFrozen = true;
+                    
+                    if (zombieAnimCtrl) zombieAnimCtrl->SetSpeed(zombieAnimPath, 0.0f);
+                    if (axeAnimCtrl) axeAnimCtrl->SetSpeed(axeAnimPath, 0.0f);
+
+                    if (debugText)
+                    {
+                        debugText->SetText("AXE SPLIT CALIBRATED! PRESS SPACEBAR TO RESPAWN.");
+                        debugText->SetColor(Color::RED);
+                    }
+                    URHO3D_LOGINFO("--- AXE HIT DETECTION: POSES LOCKED IN PLACE ---");
+                }
+            }
+        }
+
+        // 4. Movement & Solid Body Stopping Boundary
+        // CHANGED: Contact now triggers a 2-second freeze then auto-respawn
+        if (!arenaHitFrozen && !zombieContactFrozen)
+        {
+            float bodyDistance = (axeManPivot->GetPosition() - zombiePivot->GetPosition()).Length();
+            const float solidStopThreshold = 0.38f;
+
+            if (bodyDistance > solidStopThreshold)
+            {
+                zombiePivot->Translate(Vector3::FORWARD * 0.24f * dt);
+            }
+            else
+            {
+                // CONTACT: Zombie reached axe man â€” freeze frame and start 2-sec countdown
+                zombieContactFrozen = true;
+                zombieFreezeTimer = 0.0f;
+                if (zombieAnimCtrl) zombieAnimCtrl->SetSpeed(zombieAnimPath, 0.0f);
+            }
+
+            if (zombiePivot->GetPosition().x_ > 2.2f)
+            {
+                if (zombieAnimCtrl) zombieAnimCtrl->StopAll();
+            }
+        }
+        else if (zombieContactFrozen)
+        {
+            zombieFreezeTimer += dt;
+            if (zombieFreezeTimer >= 2.0f)
+            {
+                // 2 seconds elapsed â€” respawn at initial start, restart animation unaltered
+                zombieContactFrozen = false;
+                zombieFreezeTimer = 0.0f;
+                zombiePivot->SetPosition(zombieStartPos);
+                
+                if (zombieAnimCtrl)
+                {
+                    zombieAnimCtrl->StopAll();
+                    zombieAnimCtrl->Play(zombieAnimPath, 0, true, 0.0f);
+                    zombieAnimCtrl->SetTime(zombieAnimPath, 0.0f);
+                    zombieAnimCtrl->SetSpeed(zombieAnimPath, 0.5f);
+                }
+            }
+        }
+
+        // 5. ORBIT CAMERA TRACKING SYSTEM
+        const Vector3 screenCenterAnchor(0.0f, 0.6f, 1.6f);
+        Vector3 anchorToCamVector = cameraNode->GetPosition() - screenCenterAnchor;
+
+        bool orbitLeft  = input->GetKeyDown(KEY_A) || input->GetKeyDown(KEY_Q);
+        bool orbitRight = input->GetKeyDown(KEY_D) || input->GetKeyDown(KEY_E);
+
+        if (orbitLeft || orbitRight)
+        {
+            float rotationDirection = orbitLeft ? -90.0f : 90.0f;
+            rotationDirection *= dt;
+            Quaternion yawOrbitRotation(rotationDirection, Vector3::UP);
+            anchorToCamVector = yawOrbitRotation * anchorToCamVector;
+            cameraNode->SetPosition(screenCenterAnchor + anchorToCamVector);
+        }
+
+        if (input->GetKeyDown(KEY_W)) cameraNode->Translate(Vector3::FORWARD * 3.0f * dt);
+        if (input->GetKeyDown(KEY_S)) cameraNode->Translate(Vector3::BACK * 3.0f * dt);
+
+        cameraNode->LookAt(screenCenterAnchor);
+
+        camLightNode->SetPosition(cameraNode->GetPosition());
+        camLightNode->SetRotation(cameraNode->GetRotation());
+         
+        if (input->GetKeyPress(KEY_ESCAPE)) engine->Exit();
+    }
+
+    renderer->SetViewport(0, nullptr);
+    engine->Exit();
+
+    return 0;
+}
+
+

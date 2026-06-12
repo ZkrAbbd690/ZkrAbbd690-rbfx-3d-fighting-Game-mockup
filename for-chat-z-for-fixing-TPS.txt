@@ -1,0 +1,330 @@
+You are absolutely right. The context window is getting cluttered, and the dolly-zoom math is causing a hard engine freeze (the engine is choking on the lerped FOV + Ortho swaps, freezing the game for 8-14 seconds). 
+
+Here is a comprehensive, clean document you can copy and paste directly into a **new chat** to give the AI the exact state of your project and what needs to be fixed.
+
+***
+
+# PROJECT STATE DOCUMENT: RBFX Battle Arena Mockup
+
+## 1. Project Overview
+I am building a 3D arena combat game mockup in **rbfx** (the Rebel Fork evolution of Urho3D). It features a Fighter (axe-wielding character) and a Zombie. We recently implemented a successful runtime texture swap for "bite wounds" using `dynamic_cast<StaticModel>` and `Material->Clone()`. 
+
+We are currently trying to implement a **Dual-Camera Mode System** toggled by the TAB key:
+- **TPS Mode (Third Person Shooter):** Camera behind the fighter's shoulder. WASD moves the Fighter relative to the camera direction (Ninja sample style). Fighter can move freely in 3D space (X, Y, Z) to align with the Zombie's depth.
+- **SIDE Mode (Street Fighter / NieR style):** Orthographic camera fixed on the side. Fighter is strictly locked to the X-axis (Z-axis depth is zeroed out). Only A/D movement allowed.
+
+## 2. The Core Problem
+The `CameraController` I wrote attempts a smooth "dolly zoom" transition between the two modes by lerping the Field of View (FOV) and swapping the Orthographic flag. **This causes a massive engine freeze.** The log shows a transition that should take 0.5 seconds actually takes 8 to 14 real seconds, freezing the whole game loop. 
+
+Additionally, in TPS mode, the camera defaults to `Yaw = 0`, which places it in front of the fighter (looking at the fighter's face), making it look identical to the Side View instead of a behind-the-shoulder TPS view. WASD movement feels like it "switches back" because the camera isn't following the fighter's rotation.
+
+## 3. Required Solution
+1. **Remove the FOV/Ortho Dolly Zoom transition.** It is too fragile and causes hangs. Just snap the camera position, rotation, and Ortho flag instantly or use a very simple position lerp that does *not* touch the FOV until the very end.
+2. **Fix TPS Camera Direction:** The TPS camera must be a proper "Chase Cam". When the fighter turns via WASD, the camera should orbit to stay behind the fighter's back.
+3. **Ensure WASD maps correctly:** W = Forward relative to camera, S = Backward, A = Left, D = Right. 
+
+## 4. Current Working Code (Copy these exactly into the new chat)
+
+### CameraController.h
+```cpp
+#pragma once
+#include <Urho3D/Scene/LogicComponent.h>
+#include <Urho3D/Graphics/Camera.h>
+#include <Urho3D/Scene/Node.h>
+#include "Fighter.h"
+
+using namespace Urho3D;
+
+enum class CameraMode { TPS, SIDE, TRANSITIONING };
+
+class CameraController : public LogicComponent
+{
+    URHO3D_OBJECT(CameraController, LogicComponent);
+
+public:
+    CameraController(Context* context);
+    ~CameraController() override = default;
+
+    static void RegisterObject(Context* context);
+
+    void Initialize(Node* cameraNode, Fighter* fighter);
+    void Update(float timeStep) override;
+    void ToggleMode();
+
+    CameraMode GetCurrentMode() const { return currentMode_; }
+
+private:
+    void UpdateTPS(float timeStep);
+    void UpdateSide(float timeStep);
+    void UpdateTransition(float timeStep);
+
+    WeakPtr<Node> cameraNode_;
+    WeakPtr<Fighter> fighter_;
+    Camera* camera_ = nullptr;
+    Input* input_ = nullptr;
+
+    CameraMode currentMode_ = CameraMode::TPS;
+
+    // Transition state
+    CameraMode targetMode_ = CameraMode::TPS;
+    float transitionTimer_ = 0.0f;
+    float transitionDuration_ = 0.5f; 
+    
+    Vector3 startPos_;
+    Vector3 targetPos_;
+
+    // TPS Settings
+    float tpsFov_ = 60.0f;
+    float tpsDistance_ = 3.5f;
+    float tpsHeight_ = 1.5f;
+    float tpsOrbitSpeed_ = 90.0f;
+    float tpsYaw_ = 0.0f; 
+
+    // Side Settings
+    float sideOrthoSize_ = 6.5f;
+    float sideDistance_ = 15.0f;
+};
+```
+
+### CameraController.cpp
+```cpp
+#include "CameraController.h"
+#include <Urho3D/Core/Context.h>
+#include <Urho3D/Input/Input.h>
+#include <Urho3D/Math/MathDefs.h>
+#include <Urho3D/IO/Log.h> 
+
+CameraController::CameraController(Context* context) : LogicComponent(context)
+{
+    SetUpdateEventMask(USE_UPDATE);
+    transitionDuration_ = 0.5f;
+}
+
+void CameraController::RegisterObject(Context* context)
+{
+    context->RegisterFactory<CameraController>();
+}
+
+void CameraController::Initialize(Node* cameraNode, Fighter* fighter)
+{
+    cameraNode_ = cameraNode;
+    fighter_ = fighter;
+    camera_ = cameraNode->GetComponent<Camera>();
+    input_ = GetSubsystem<Input>();
+
+    if (camera_)
+    {
+        camera_->SetFov(tpsFov_);
+        camera_->SetOrthographic(false);
+    }
+    URHO3D_LOGINFO("[CAM-CTRL] Initialized. Starting in TPS Mode.");
+}
+
+void CameraController::ToggleMode()
+{
+    if (currentMode_ == CameraMode::TRANSITIONING) return;
+
+    targetMode_ = (currentMode_ == CameraMode::TPS) ? CameraMode::SIDE : CameraMode::TPS;
+    currentMode_ = CameraMode::TRANSITIONING;
+    transitionTimer_ = 0.0f;
+
+    startPos_ = cameraNode_->GetPosition();
+
+    Vector3 fighterPos = fighter_ ? fighter_->GetPosition() : Vector3::ZERO;
+    if (targetMode_ == CameraMode::SIDE)
+    {
+        targetPos_ = Vector3(fighterPos.x_, tpsHeight_, fighterPos.z_ + sideDistance_);
+    }
+    else
+    {
+        float rad = tpsYaw_ * M_DEGTORAD;
+        targetPos_ = fighterPos + Vector3(-sin(rad) * tpsDistance_, tpsHeight_, -cos(rad) * tpsDistance_);
+    }
+}
+
+void CameraController::Update(float timeStep)
+{
+    if (!cameraNode_ || !camera_ || !fighter_) return;
+
+    if (currentMode_ == CameraMode::TRANSITIONING)
+        UpdateTransition(timeStep);
+    else if (currentMode_ == CameraMode::TPS)
+        UpdateTPS(timeStep);
+    else
+        UpdateSide(timeStep);
+}
+
+void CameraController::UpdateTPS(float timeStep)
+{
+    if (input_->GetKeyDown(KEY_Q)) tpsYaw_ += tpsOrbitSpeed_ * timeStep;
+    if (input_->GetKeyDown(KEY_E)) tpsYaw_ -= tpsOrbitSpeed_ * timeStep;
+
+    float wheel = input_->GetMouseMoveWheel();
+    if (wheel != 0.0f) {
+        tpsDistance_ -= wheel * 0.5f;
+        tpsDistance_ = Clamp(tpsDistance_, 1.5f, 10.0f);
+    }
+
+    if (input_->GetKeyDown(KEY_R)) tpsDistance_ -= 3.0f * timeStep;
+    if (input_->GetKeyDown(KEY_F)) tpsDistance_ += 3.0f * timeStep;
+    tpsDistance_ = Clamp(tpsDistance_, 1.5f, 10.0f);
+
+    Vector3 fighterPos = fighter_->GetPosition();
+    float rad = tpsYaw_ * M_DEGTORAD;
+    
+    Vector3 idealPos = fighterPos + Vector3(-sin(rad) * tpsDistance_, tpsHeight_, -cos(rad) * tpsDistance_);
+    cameraNode_->SetPosition(idealPos);
+    cameraNode_->LookAt(fighterPos + Vector3::UP * 1.0f);
+}
+
+void CameraController::UpdateSide(float timeStep)
+{
+    Vector3 fighterPos = fighter_->GetPosition();
+    Vector3 idealPos = Vector3(fighterPos.x_, tpsHeight_, fighterPos.z_ + sideDistance_);
+    cameraNode_->SetPosition(idealPos);
+    cameraNode_->LookAt(Vector3(fighterPos.x_, tpsHeight_, fighterPos.z_));
+}
+
+void CameraController::UpdateTransition(float timeStep)
+{
+    transitionTimer_ += timeStep;
+    float t = Clamp(transitionTimer_ / transitionDuration_, 0.0f, 1.0f);
+    float smoothT = t * t * (3.0f - 2.0f * t);
+
+    Vector3 currentPos = startPos_.Lerp(targetPos_, smoothT);
+    cameraNode_->SetPosition(currentPos);
+
+    Vector3 fighterPos = fighter_ ? fighter_->GetPosition() : Vector3::ZERO;
+    cameraNode_->LookAt(fighterPos + Vector3::UP * 1.0f);
+
+    // NOTE: FOV lerping was removed here because it caused massive engine freezes!
+
+    if (t >= 1.0f)
+    {
+        currentMode_ = targetMode_;
+        
+        if (targetMode_ == CameraMode::SIDE) {
+            camera_->SetOrthographic(true);
+            camera_->SetOrthoSize(sideOrthoSize_);
+        } else {
+            camera_->SetOrthographic(false);
+            camera_->SetFov(tpsFov_);
+        }
+
+        if (fighter_) fighter_->SetMoveMode(targetMode_ == CameraMode::SIDE ? MoveMode::SIDE : MoveMode::TPS);
+    }
+}
+```
+
+### Fighter.h (Relevant additions)
+```cpp
+enum class MoveMode { TPS, SIDE };
+
+class Fighter : public LogicComponent
+{
+    // ... existing code ...
+public:
+    void SetMoveMode(MoveMode mode);
+    MoveMode GetMoveMode() const { return currentMoveMode_; }
+private:
+    MoveMode currentMoveMode_ = MoveMode::TPS;
+};
+```
+
+### Fighter.cpp (Relevant Movement Block inside `FixedUpdate`)
+```cpp
+void Fighter::SetMoveMode(MoveMode mode)
+{
+    currentMoveMode_ = mode;
+    if (mode == MoveMode::SIDE && rigidBody_) {
+        Vector3 vel = rigidBody_->GetLinearVelocity();
+        vel.z_ = 0.0f;
+        rigidBody_->SetLinearVelocity(vel);
+    }
+}
+
+// Inside FixedUpdate, after the swing logic:
+    if (rigidBody_)
+    {
+        Input* input = GetSubsystem<Input>();
+        Vector3 vel = rigidBody_->GetLinearVelocity();
+        vel.y_ = 0.0f; 
+
+        if (currentMoveMode_ == MoveMode::SIDE)
+        {
+            float moveX = 0.0f;
+            if (input->GetKeyDown(KEY_A)) moveX = -1.0f;
+            if (input->GetKeyDown(KEY_D)) moveX = 1.0f;
+
+            vel.x_ = moveX * 3.0f; 
+            vel.z_ = 0.0f;         
+
+            if (moveX < 0.0f) node_->SetRotation(Quaternion(0.0f, 270.0f, 0.0f));
+            else if (moveX > 0.0f) node_->SetRotation(Quaternion(0.0f, 90.0f, 0.0f));
+            else if (auto* zNode = node_->GetScene()->GetChild("ZombiePivot")) {
+                float zDir = zNode->GetWorldPosition().x_ - node_->GetWorldPosition().x_;
+                if (zDir > 0.0f) node_->SetRotation(Quaternion(0.0f, 90.0f, 0.0f));
+                else node_->SetRotation(Quaternion(0.0f, 270.0f, 0.0f));
+            }
+        }
+        else // TPS MODE
+        {
+            Camera* cam = nullptr;
+            Node* camNode = node_->GetScene()->GetChild("Camera");
+            if (camNode) cam = camNode->GetComponent<Camera>();
+            
+            Vector3 moveDir = Vector3::ZERO;
+            if (input->GetKeyDown(KEY_W)) moveDir += Vector3::FORWARD;
+            if (input->GetKeyDown(KEY_S)) moveDir += Vector3::BACK;
+            if (input->GetKeyDown(KEY_A)) moveDir += Vector3::LEFT;
+            if (input->GetKeyDown(KEY_D)) moveDir += Vector3::RIGHT;
+
+            if (!moveDir.Equals(Vector3::ZERO))
+            {
+                if (cam)
+                {
+                    float camYaw = cam->GetNode()->GetWorldRotation().EulerAngles().y_;
+                    Quaternion camRot(0.0f, camYaw, 0.0f);
+                    moveDir = camRot * moveDir; 
+                    moveDir.Normalize();
+                }
+                else
+                {
+                    moveDir.Normalize();
+                }
+                
+                vel = moveDir * 3.0f; 
+                float targetYaw = atan2f(-moveDir.x_, -moveDir.z_) * M_RADTODEG;
+                node_->SetRotation(Quaternion(0.0f, targetYaw, 0.0f));
+            }
+            else
+            {
+                vel.x_ = 0.0f;
+                vel.z_ = 0.0f;
+            }
+        }
+
+        rigidBody_->SetLinearVelocity(Vector3(vel.x_, 0.0f, vel.z_));
+    }
+```
+
+### main.cpp (Relevant Setup & Loop)
+```cpp
+// In setup:
+context->RegisterFactory<CameraController>();
+auto* camController = cameraNode->CreateComponent<CameraController>();
+camController->Initialize(cameraNode, fighterComponent);
+fighterComponent->SetMoveMode(MoveMode::TPS);
+
+// In main loop (replacing old camera code):
+if (input->GetKeyPress(KEY_TAB))
+{
+    if (camController) camController->ToggleMode();
+}
+camLightNode->SetPosition(cameraNode->GetPosition());
+camLightNode->SetRotation(cameraNode->GetRotation());
+```
+
+***
+
+**Just copy everything above this line and paste it into the new chat. It gives the next AI all the context it needs without the hallucinated history!**

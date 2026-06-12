@@ -1,0 +1,48 @@
+**PROJECT CONTEXT — rbfx (Urho3D fork) Fighting Game**
+
+**Goal:** Two-character combat arena. Fighter (axe man) defends against Zombie runner approaching from left. Spacebar triggers axe swing.
+
+**Files in project:**
+- `Fighter.h / Fighter.cpp` — Fighter LogicComponent. Mixamo animation, physics capsule, per-frame root-motion extraction with forward cap, resume-from-interrupt attack.
+- `Zombie.h / Zombie.cpp` — Zombie LogicComponent. Direct position-drive approach, contact freeze, neck bite, death.
+- `CombatSystem.h / CombatSystem.cpp` — Master arbitrator. Hit vs bite timing, arena reset on death/kill.
+- `main.cpp` — Scene setup, camera orbit, debug renderer, component instantiation, main loop.
+- `CMakeLists.txt` — Standard Urho3D executable setup.
+
+**Ninja Snow Wars reference:** Complete C++ source of 80_ninja_snow_war sample (Urho3D-1.9 / Dviglo) provided for learning: component registration, event-driven architecture, physics layers, spawning utilities, game object hierarchy.
+
+**EVOLUTION OF FIGHTER GLITCH FIX (final state):**
+
+1. *Initial problem:* Fighter glitched back-and-forth on spacebar press (root motion vs locked pivot mismatch).
+2. *Attempted windup:* Step back 6cm, step forth, then swing. Still glitched on double-press.
+3. *Attempted mesh reset:* `ResetMeshTransform()` + `CancelRootMotion()`. Reduced pop but fighter snapped backward.
+4. *Attempted bone lock:* Root bone lock in PostUpdate + unconditional position lock. No backward glitch, but fighter frozen in place.
+5. *Attempted root-motion extraction (buggy):* Extracted total displacement from bind pose every frame. Fighter teleported across map rapidly.
+6. **CURRENT FINAL SOLUTION (per-frame delta with cap):**
+   - In `FixedUpdate`, each frame measures `rootWorldNow - rootWorldLastFrame_` (single frame's motion).
+   - Applies only the forward X component to the pivot node.
+   - Immediately snaps root bone back to `rootWorldLastFrame_` via `SetWorldPosition()` so delta doesn't accumulate.
+   - `MAX_SWING_FORWARD = 0.35f` caps total advance per swing.
+   - When swing ends, `arenaPosition_ = node_-&gt;GetPosition()` — fighter stays at new forward spot.
+   - `Reset()` uses `spawnPosition_` to return to original spawn on arena restart.
+   - Attack resumes from `savedAttackTime_` if interrupted mid-swing.
+
+**CURRENT BEHAVIOR:**
+- Spacebar: starts/resumes axe swing.
+- Fighter advances ~0.35 units forward during swing, then stops.
+- No backward motion, no snap-back, no teleport.
+- Idle animation plays at new position after swing ends.
+- Full `Reset()` returns to original spawn.
+
+**ZOMBIE BEHAVIOR (unchanged):**
+- Direct position drive: `pos.x_ += runSpeed_ * timeStep`.
+- Contact freeze at `solidStopThreshold_` (1.2f).
+- Neck bite after 0.75s delay.
+- Death on hit (`isFrozen_ = true`).
+
+**REMAINING TASKS / TUNING:**
+- `MAX_SWING_FORWARD` (0.35f) and `runSpeed_` may need balance for gameplay feel.
+- Fighter may need a hard world boundary so he doesn't walk off-screen after many swings.
+- Zombie `CheckCollision()` uses manual position; could switch to physics collision.
+- Idle animation path is empty in prefab init; populate if idle anim exists.
+- Debug drawing active (green/blue boxes); disable for release.

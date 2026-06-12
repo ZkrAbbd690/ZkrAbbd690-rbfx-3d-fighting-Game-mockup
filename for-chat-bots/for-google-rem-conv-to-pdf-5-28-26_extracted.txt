@@ -1,0 +1,1578 @@
+
+
+--- Page 1 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+"Combatant.h"
+
+#pragma once
+
+#include <Urho3D/Scene/Component.h>
+
+#include <Urho3D/Graphics/AnimationController.h>
+#include <Urho3D/Scene/Node.h>
+
+#include <Urho3D/Core/StringUtils.h>
+
+using namespace Urho3D;
+enum SIDE { SIDE_HERO = @, SIDE_VILLAIN = 1 };
+
+class Combatant : public Component
+
+{
+URHO3D_OBJECT(Combatant, Component) ;
+
+public:
+Combatant(Context* context)
+
+: Component (context)
+node_(nullptr)
+animController_(nullptr)
+isFrozen_(false)
+freezeTimer_(0.0f)
+side_(@)
+maxHealth_(10@)
+health_(10@)
+
+we 6’ & © ee &
+
+{}
+
+virtual void Initialize(Node* node, const ea::string& prefabPath) = @;
+virtual void Update(float timeStep) = Q;
+
+virtual bool CheckCollision(Combatant* other)
+virtual void HandleHit(Combatant* attacker) =
+
+Q;
+
+// Make SetFrozen VIRTUAL so Zombie can override it
+virtual void SetFrozen(bool freeze, bool lockAnimation = true) = Q;
+
+virtual void Reset() = @;
+
+// Common utility accessors
+virtual float GetForwardOffset() const { return @.0f; } // Added for lunge tracking
+
+Node* GetNode() const { return node _; }
+Vector3 GetPosition() const { return node_ ? node_->GetWorldPosition() : Vector3::ZERO; }
+void SetPosition(const Vector3& pos) { if (node_) node_->SetWorldPosition(pos); }
+
+bool IsFrozen() const { return isFrozen_; }
+
+protected:
+
+Node* node_;
+
+AnimationController* animController_;
+
+bool isFrozen_;
+
+float freezeTimer_;
+
+int side_;
+
+int maxHealth_;
+
+int health_;
+}5
+"CombatSystem. cpp"
+#include "CombatSystem.h"
+#include <Urho3D/I0/Log.h>
+#include <Urho3D/Resource/ResourceCache.h>
+#include <Urho3D/Scene/Scene.h>
+#include <Urho3D/Graphics/AnimationController.h>
+#include <Urho3D/Graphics/AnimatedModel .h>
+#include <Urho3D/Graphics/Skeleton.h>
+#include <Urho3D/Physics/RigidBody.h>
+#include <Urho3D/Physics/CollisionShape.h>
+#include <cmath>
+
+file:///D:/new-test-kilo/updated-physics.txt 1/18
+
+
+--- Page 2 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+// Nalidateur de précision pour bloquer l'artefact d'étirement (NaN)
+inline float SanitizeBoneValue(float value, float fallback = @.@f)
+
+{
+if (std::isnan(value) || !std::isfinite(value))
+{
+return fallback;
+}
+return value;
+}
+
+CombatSystem: :CombatSystem(Context* context)
+: Component (context)
+» fighter_(nullptr)
+» zombie _(nullptr)
+» debugText_(nullptr)
+» arenaHitFrozen_(false)
+
+{
+zombieOffsetScale_ = @.820f;
+zombieOffsetRotation_ = 78.0f;
+fighterOffsetRotation_ = 0.@f;
+zombieOffsetPosition_ = Vector3(-0.530f, 0.0f, 0.000F);
+fighterOffsetPosition_ = Vector3(0.0@0f, @.e0f, 0.e0ef);
+}
+
+void CombatSystem: :Initialize(Fighter* fighter, Zombie* zombie, Text* uiText)
+
+{
+fighter_ = fighter;
+
+zombie_ = zombie;
+
+debugText_ = uiText;
+
+arenaHitFrozen_ = false;
+}
+void CombatSystem: :UpdateCombat(float timeStep)
+{
+
+if (!fighter_ || !zombie_) return;
+
+// 1. Détection standard d'approche
+if (!arenaHitFrozen_ && !zombie_->IsNeckBiting() )
+
+{
+}
+
+zombie_->CheckCollision(fighter_);
+
+// 2. Vérification de la frappe de hache
+if (fighter_->IsMidSwing() && !zombie_->IsFrozen() && zombie_->IsContactFrozen() &&
+!arenaHitFrozen_)
+
+{
+float deltaX = std::abs(fighter_->GetPosition().x_ - zombie_->GetPosition().x_);
+if (deltaX < 1.4f)
+{
+arenaHitFrozen_ = true;
+zombie_->HandleHit(fighter_);
+if (debugText_)
+{
+debugText_->SetText( "CHOP DETECTED! PRESS SPACEBAR TO SPAWN NEXT RUNNER.");
+debugText_->SetColor(Color: :RED) ;
+}
+return;
+}
+}
+
+// 3. Lancement de la séquence de morsure synchronisée
+if (!arenaHitFrozen_ && zombie _->IsContactFrozen() && !zombie_->IsNeckBiting() && !zombie_-
+>IsFrozen() && !fighter_->IsMidSwing())
+{
+static float biteDelayTimer = @.@f;
+biteDelayTimer += timeStep;
+if (biteDelayTimer > 0.40f)
+
+{
+
+file:///D:/new-test-kilo/updated-physics.txt
+
+2/18
+
+
+--- Page 3 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+biteDelayTimer = 0.0f;
+arenaHitFrozen_ = true;
+
+zombie_->StartNeckBite(fighter_->GetNode());
+zombie_->SetBiteSynced(true);
+fighter_->SetBiteSynced(true) ;
+
+if (debugText_)
+
+{
+debugText_->SetText( "NECK BITE ACTIVE. ENFORCING NINJA-STYLE PHYSICS
+SEPARATION.");
+debugText_->SetColor(Color: : YELLOW) ;
+}
+
+Node* fNode = fighter_->GetNode();
+Node* zNode = zombie_->GetNode();
+
+if (fNode && zNode)
+{
+// REGLE DU SAMPLE NINJA : Garder Kinematic = false pour que Bullet résolve les
+collisions de maillage,
+// mais bloquer les forces de vélocité résiduelles et l'activation angulaire.
+if (fighter_->GetRigidBody()) {
+fighter_->GetRigidBody()->SetKinematic(false) ;
+fighter_->GetRigidBody()->SetAngularFactor(Vector3: :ZERO) ;
+fighter_->GetRigidBody()->SetLinearVelocity(Vector3: :ZERO) ;
+}
+if (zombie_->GetRigidBody()) {
+zombie_->GetRigidBody()->SetKinematic(false) ;
+zombie_->GetRigidBody()->SetAngularFactor(Vector3: :ZERO) ;
+zombie_->GetRigidBody()->SetLinearVelocity(Vector3: :ZERO) ;
+
+}
+
+fNode->SetRotation(Quaternion(@.e@f, fighterOffsetRotation_, 0.0f));
+zNode->SetRotation(Quaternion(@.ef, zombieOffsetRotation_, 0.@Ff));
+
+Vector3 currentFighterPos = fNode->GetPosition();
+// Note : On ignore temporairement le shift down automatique sur Y comme demandé
+fNode->SetPosition(currentFighterPos) ;
+
+Vector3 targetZombiePos = currentFighterPos + zombieOffsetPosition_;
+zNode->SetPosition(targetZombiePos) ;
+
+if (fighter_->GetRigidBody()) fighter_->GetRigidBody() -
+>SetPosition(currentFighterPos) ;
+
+if (zombie _->GetRigidBody()) zombie _->GetRigidBody()-
+>SetPosition(targetZombiePos) ;
+
+// Initialisation des animations enfants
+
+AnimationController* fAnim = nullptr;
+
+ea: :vector<Node*> fChildren;
+
+fNode->GetChildrenwithComponent<AnimationController>(fChildren, true);
+
+if (auto* topF = fNode->GetComponent<AnimationController>()) fAnim = topF;
+
+else if (!fChildren.empty() && fChildren.front()) fAnim = fChildren.front()-
+>GetComponent<AnimationController>();
+
+if (fAnim)
+
+{
+ea::string path = "fighter-nek-
+bite/test.glb.d/Animations/Armature.@61 Armature.@@1 mixamo.com_Layer®@.ani";
+fAnim->StopAl11();
+AnimationParameters params(context_, path);
+params.looped_ = true;
+fAnim->PlayNewExclusive(params) ;
+
+}
+
+AnimationController* zAnim = nullptr;
+ea: :vector<Node*> zChildren;
+zNode->GetChildrenwithComponent<AnimationController>(zChildren, true);
+
+file:///D:/new-test-kilo/updated-physics.txt
+
+3/18
+
+
+--- Page 4 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+if (auto* topZ = zNode->GetComponent<AnimationController>()) zAnim = topZ;
+else if (!zChildren.empty() && zChildren.front()) zAnim = zChildren.front()-
+>GetComponent<AnimationController>();
+
+if (zAnim)
+
+{
+ea::string path = "zombie-nek-
+
+bite/test.glb.d/Animations/Armature_Armature_mixamo.com_Layer@ @.ani";
+
+zAnim->StopAl1l();
+AnimationParameters params(context_, path);
+params.looped_ = true;
+zAnim->PlayNewExclusive(params) ;
+
+}
+}
+}
+}
+[[ sssssssssss ss SSS SSS SS SS SSS SS SSS SS SSS SSS SS SSS SSS SSS SSS SSS SS SSS SS SSS SSSSS SS
+// CODE CORRIGE INTERCEPTION ET NETTOYAGE DES OS SANS EFFET DE STRETCH
+// = S255 2525255552525 2552525552555 5252555525225 5255255525255 5252525552525 5525555252555 5255525255555 55S 5>=>
+if (arenaHitFrozen_ && zombie_->IsNeckBiting())
+{
+
+Node* fNode = fighter_->GetNode();
+Node* zNode = zombie_->GetNode();
+
+if (fNode && zNode)
+
+{
+// Maintien des ancres de base
+fNode->SetRotation(Quaternion(@.ef, fighterOffsetRotation_, 0.@f));
+zNode->SetRotation(Quaternion(@.@f, zombieOffsetRotation_, @.@Ff));
+
+// Force la friction physique a zéro pour que les capsules glissent l'une contre
+l'autre sans bloquer
+
+if (fighter_->GetRigidBody()) fighter_->GetRigidBody() -
+>SetLinearVelocity(Vector3: : ZERO) ;
+
+if (zombie_->GetRigidBody()) zombie_->GetRigidBody() -
+>SetLinearVelocity(Vector3: :ZERO);
+
+AnimatedModel* zModel = nullptr;
+
+ea: :vector<Node*> zMeshChildren;
+
+zNode->GetChildrenWithComponent<AnimatedModel>(zMeshChildren, true);
+
+if (auto* topZ = zNode->GetComponent<AnimatedModel>()) zModel = topZ;
+
+else if (!zMeshChildren.empty()) zModel = zMeshChildren.front()-
+>GetComponent<AnimatedModel>() ;
+
+if (zModel)
+
+{
+Skeleton& skeleton = zModel->GetSkeleton();
+
+// SOLUTION FINALE CONSOLIDEE : On applique le filtre de positionnement local
+// EXCLUSIVEMENT sur la colonne vertébrale. Cela empéche les os de glisser vers
+l'avant,
+// tout en évitant de toucher aux extrémités (doigts), supprimant l'effet
+d'étirement fou (NaN).
+const char* criticalPostures[] = {
+"mixamorig:Hips", "“mixamorig Hips", "Hips",
+"mixamorig:Spine", "mixamorig Spine", "Spine",
+"mixamorig:Spine1", "mixamorig Spine1", "Spine",
+"mixamorig:Spine2", "mixamorig Spine2", "Spine2",
+"mixamorig:Chest", "mixamorig Chest", "Chest"
+
+}3
+for (const char* boneName : criticalPostures)
+
+Bone* currentBone = skeleton.GetBone(boneName) ;
+if (currentBone && currentBone->node_)
+
+{
+
+Vector3 1Pos = currentBone->node_->GetPosition();
+
+file:///D:/new-test-kilo/updated-physics.txt 4/18
+
+
+--- Page 5 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+// Sécurisation stricte contre les valeurs infinies/NaN (évite le stretch
+graphique)
+
+1Pos.x_ = SanitizeBoneValue(1Pos.x_, 0.0f);
+1Pos.y_ = SanitizeBoneValue(1Pos.y_, @.@f);
+1Pos.z_ = SanitizeBoneValue(1Pos.z_, @.0f);
+
+// Injection locale directe issue du prompt a succés précédent :
+
+// On force la translation avant (X) a s‘arréter net, bloquant la
+pénétration de l'os dans le joueur.
+
+if (1Pos.x_ > 0.e@0e0Ff)
+
+{
+}
+
+1lPos.x_ = 0.000eFf;
+
+currentBone->node_->SetPosition(1Pos) ;
+
+}
+
+// LOG EXPLICIT DE CONTROLE RUNTIME
+URHO3D_LOGINFO("[ANTI-MERGE] Spinal tracking matrix locked. Dynamic penetration
+rejected.");
+
+}
+}
+}
+}
+void CombatSystem: :HandleManualAttack()
+if (!fighter_ || !zombie_) return;
+if (zombie_->IsFrozen() || zombie_->IsNeckBiting())
+{
+
+URHO3D_LOGINFO("[SYSTEM-INPUT] SPACEBAR: Resetting arena stage...");
+ResetSimulation();
+return;
+
+}
+
+URHO3D_LOGINFO("[SYSTEM-INPUT] SPACEBAR: Executing fighter axe swing command.");
+
+fighter_->StartAttack();}void CombatSystem: :ResetSimulation(){arenaHitFrozen_ = false;if
+(fighter_) fighter_->Reset();if (zombie_) zombie _->Reset();if (debugText_){debugText_-
+>SetText ("STAGE ACTIVE: RUNNING...");debugText_->SetColor(Color: :GREEN) ; }}
+"CombatSystem.h"
+#pragma once
+#include <Urho3D/Scene/Component.h>
+#include <Urho3D/UI/Text.h>
+#include "Fighter.h"
+#include "Zombie.h"
+
+using namespace Urho3D;
+class CombatSystem : public Component
+{
+URHO3D_OBJECT(CombatSystem, Component) ;
+public:
+CombatSystem(Context* context);
+~CombatSystem() override = default;
+void Initialize(Fighter* fighter, Zombie* zombie, Text* uiText);
+void UpdateCombat(float timeStep) ;
+void HandleManualAttack();
+void ResetSimulation();
+bool IsArenaHitFrozen() const { return arenaHitFrozen_; }
+
+private:
+
+file:///D:/new-test-kilo/updated-physics.txt 5/18
+
+
+--- Page 6 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+Fighter* fighter_;
+Zombie* zombie_;
+Text* debugText_;
+bool arenaHitFrozen_;
+
+float zombieOffsetScale ;
+
+float zombieOffsetRotation_;
+
+float fighterOffsetRotation_;
+
+Vector3 zombieOffsetPosition_;
+
+Vector3 fighterOffsetPosition_;
+}3
+
+"Fighter .cpp
+#include "Fighter.h"
+
+#include <Urho3D/I0/Log.h>
+
+#include <Urho3D/Core/Context.h>
+
+#include <Urho3D/Resource/ResourceCache.h>
+#include <Urho3D/Scene/PrefabResource.h>
+#include <Urho3D/Graphics/AnimatedModel .h>
+#include <cstring>
+
+Fighter: :Fighter(Context* context) : LogicComponent(context)
+{
+
+}
+
+SetUpdateEventMask(USE_FIXEDUPDATE) ;
+
+void Fighter: :RegisterObject(Context* context)
+{
+
+}
+
+context->RegisterFactory<Fighter>();
+
+void Fighter: :Initialize(Node* node, const ea::string& prefabPath)
+{
+node_ = node;
+idleAnimPath_.clear();
+attackAnimPath_ = "test.glb.d/Animations/Armature_Armature_mixamo.com_Layer@.ani”;
+
+if (node_)
+{
+arenaPosition_ = node_->GetPosition();
+auto* cache = GetSubsystem<ResourceCache>();
+if (cache && !prefabPath.empty() )
+{
+auto* prefabFile = cache->GetResource<PrefabResource>(prefabPath) ;
+if (prefabFile)
+{
+meshNode_ = node_->CreateChild("AxeManMesh") ;
+prefabFile->InstantiateReference(meshNode_);
+meshNode_->SetRotation(Quaternion(@.@f, -90.0f, @.0f));
+meshNode_->SetScale(5.0f / 9.0f);
+
+Vector3 pos = meshNode_->GetPosition();
+pos.y_ = @.05f;
+meshNode_->SetPosition(pos) ;
+
+animController_ = meshNode_->FindComponent<AnimationController>();
+if (animController_) animController_->StopAl11();
+
+}
+
+if (meshNode_) ReparentWeapon(meshNode_);
+SetupPhysics();
+
+}
+Reset();
+
+}
+
+void Fighter: :Initialize(Node* node, const ea::string& idleAnimPath, const ea::string&
+attackAnimPath)
+
+file:///D:/new-test-kilo/updated-physics.txt 6/18
+
+
+--- Page 7 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+{
+
+node_ = node;
+
+idleAnimPath_ = idleAnimPath;
+
+attackAnimPath_ = attackAnimPath;
+
+if (node_)
+
+{
+arenaPosition_ = node_->GetPosition();
+animController_ = node_->GetOrCreateComponent<AnimationController>();
+SetupPhysics();
+
+}
+
+Reset();
+
+}
+
+void Fighter: :SetupPhysics()
+{
+if (!node_) return;
+rigidBody_ = node_->GetOrCreateComponent<RigidBody>() ;
+if (rigidBody_)
+{
+rigidBody_->SetMass(8@.0f) ;
+rigidBody_->SetUseGravity(true); // Gravity active like Ninja Sample
+rigidBody_->SetLinearDamping(10.@F) ;
+rigidBody_->SetAngularDamping(10.@F) ;
+rigidBody_->SetKinematic(false) ;
+rigidBody_->SetCollisionLayer (3) ;
+rigidBody_->SetCollisionMask(@xFFFFFFFF) ;
+
+// NINJA SAMPLE RULE: Freeze all angular rotations (X, Y, Z rotation tipping over)
+// This forces the capsule to stay perfectly vertical on the ground grid at all times
+rigidBody_->SetAngularFactor(Vector3: : ZERO);
+
+collisionShape_ = node_->GetOrCreateComponent<CollisionShape>();
+if (collisionShape_) collisionShape_->SetCapsule(@.45f, 1.6f, Vector3(0.0f, @.8f, @.ef));
+}
+
+void Fighter: :Reset()
+
+{
+isSwinging = false;
+isBiteSynced_ = false;
+SwingTimer_ = 0.0f;
+
+if (node_)
+{
+node_->SetPosition(arenaPosition_);
+node_->SetRotation(Quaternion: : IDENTITY) ;
+if (rigidBody_)
+{
+rigidBody_->SetKinematic(false);
+rigidBody_->SetAngularFactor(Vector3::ZERO); // Re-enforce lock
+rigidBody_->SetPosition(arenaPosition_);
+rigidBody_->SetRotation(Quaternion: : IDENTITY);
+rigidBody_->SetLinearVelocity(Vector3: :ZERO);
+rigidBody_->ResetForces();
+rigidBody_->Activate();
+}
+}
+
+ResetMeshLocalTransform() ;
+if (animController_) animController_->StopAl11();
+}
+
+void Fighter: :ResetMeshLocalTransform()
+
+{
+if (meshNode_)
+
+{
+meshNode_->SetRotation(Quaternion(@.0f, -90.0f, @.0f));
+
+meshNode_->SetScale(5.0f / 9.0f);
+meshNode_->SetPosition(Vector3(@.0f, @.05f, @.0f));
+
+}
+
+file:///D:/new-test-kilo/updated-physics.txt 7/18
+
+
+--- Page 8 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+void Fighter: :StartAttack()
+
+{
+
+}
+
+if (isSwinging || isBiteSynced_) return;
+if (!animController_) return;
+
+isSwinging § = true;
+SwingTimer_ = 0.0f;
+animController_->StopA11();
+
+AnimationParameters params(context_, attackAnimPath_);
+params.looped_ = false;
+animController_->PlayNewExclusive(params) ;
+animController_->SetTime(attackAnimPath_, 0.0f);
+animController_->SetSpeed(attackAnimPath_, 1.0f);
+
+void Fighter: :FixedUpdate(float timeStep)
+
+{
+
+}
+
+if (isBiteSynced_) return;
+
+if (isSwinging )
+
+{
+swingTimer_ += timeStep;
+if (!animController_->IsPlaying(attackAnimPath_) )
+{
+isSwinging_ = false;
+swingTimer_ = 0.0f;
+ResetMeshLocalTransform() ;
+if (rigidBody_)
+{
+rigidBody_->SetPosition(arenaPosition_);
+rigidBody_->SetLinearVelocity(Vector3: :ZERO) ;
+rigidBody_->Activate();
+}
+}
+}
+if (rigidBody_ && !isSwinging_)
+{
+Vector3 pos = rigidBody_->GetPosition();
+Vector3 drift = arenaPosition_ - pos;
+drift.y_ = 0.0f;
+if (drift.Length() > @.001f)
+{
+rigidBody_->SetPosition(arenaPosition_);
+rigidBody_->SetLinearVelocity(Vector3: :ZERO);
+}
+if (node_->GetPosition() != arenaPosition_) node_->SetPosition(arenaPosition_) ;
+}
+
+void Fighter: :ReparentWeapon(Node* meshNode)
+
+{
+
+if (!meshNode) return;
+auto* animatedModel = meshNode->FindComponent<AnimatedModel>() ;
+if (!animatedModel) return;
+
+Skeleton& skeleton = animatedModel->GetSkeleton();
+Bone* rightHandBone = skeleton.GetBone("RightHand") ;
+if (rightHandBone && rightHandBone->node_)
+{
+ea: :vector<Node*> allDescendants;
+ea: :vector<Node*> stack = { meshNode };
+while (!stack.empty())
+{
+Node* current = stack.back();
+stack.pop_back();
+
+file:///D:/new-test-kilo/updated-physics.txt
+
+8/18
+
+
+--- Page 9 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+}
+
+"Fighter.
+
+for (Node* child : current->GetChildren())
+{
+allDescendants.push_back(child) ;
+stack. push_back(child);
+
+}
+
+for (Node* child : allDescendants)
+
+auto* sm = child->GetComponent<StaticModel>();
+
+if (!sm) continue;
+
+Model* mdl = sm->GetModel();
+
+if (!md1 || std::strstr(mdl->GetName().c_str(), "BattleAxe") == nullptr) continue;
+
+Vector3 worldPos = child->GetWorldPosition() ;
+
+Quaternion worldRot = child->GetWorldRotation();
+child->SetParent(rightHandBone->node_);
+
+Quaternion handInv = rightHandBone->node_->GetWorldRotation().Inverse();
+child->SetPosition(handInv * (worldPos - rightHandBone->node_->GetWorldPosition()));
+child->SetRotation(handInv * worldRot);
+
+h"
+
+#pragma once
+
+#include
+#include
+#include
+#include
+#include
+
+<Urho3D/Scene/LogicComponent.h>
+<Urho3D/Graphics/AnimationController.h>
+<Urho3D/Physics/RigidBody.h>
+<Urho3D/Physics/CollisionShape.h>
+<Urho3D/Graphics/AnimatedModel .h>
+
+using namespace Urho3D;
+
+class Fighter : public LogicComponent
+
+{
+
+URHO3D_OBJECT(Fighter, LogicComponent) ;
+
+public:
+
+Fighter(Context* context) ;
+~Fighter() override = default;
+
+static void RegisterObject(Context* context);
+
+void
+void
+void
+void
+void
+
+void
+bool
+bool
+
+@.60f); }
+
+Initialize(Node* node, const ea::string& prefabPath) ;
+
+Initialize(Node* node, const ea::string& idleAnimPath, const ea::string& attackAnimPath) ;
+Reset();
+
+StartAttack();
+
+FixedUpdate(float timeStep) override;
+
+SetBiteSynced(bool synced) { isBiteSynced_ = synced; }
+IsSwinging() const { return isSwinging ; }
+IsMidSwing() const { return isSwinging 8&& (swingTimer_ >= @.20f && swingTimer_ <=
+
+Vector3 GetPosition() const { return node_ ? node_->GetPosition() : Vector3::ZERO; }
+Quaternion GetRotation() const { return node_ ? node_->GetRotation() : Quaternion:: IDENTITY; }
+RigidBody* GetRigidBody() const { return rigidBody ; }
+
+private:
+void
+void
+void
+void
+
+ReparentWeapon(Node* meshNode) ;
+ResetMeshLocalTransform() ;
+SetupPhysics();
+SetupBoneColliders();
+
+SharedPtr<Node> node_;
+
+SharedPtr<Node> meshNode_;
+SharedPtr<AnimationController> animController_;
+SharedPtr<RigidBody> rigidBody_;
+SharedPtr<CollisionShape> collisionShape_;
+
+file:///D:/new-test-kilo/updated-physics.txt 9/18
+
+
+--- Page 10 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+ea::string idleAnimPath_;
+ea::string attackAnimPath_;
+
+bool isSwinging {false};
+
+bool isBiteSynced_{false};
+
+float swingTimer_{0.0F};
+
+Vector3 arenaPosition_{Vector3: :ZERO};
+
+}3
+
+"main.cpp"
+
+#include <Urho3D/Urho3D.h>
+
+#include <Urho3D/Engine/Engine.h>
+#include <Urho3D/Engine/EngineDefs.h>
+#include <Urho3D/Graphics/Camera.h>
+#include <Urho3D/Graphics/Light.h>
+#include <Urho3D/Graphics/Octree.h>
+#include <Urho3D/Graphics/Renderer.h>
+#include <Urho3D/Graphics/Viewport.h>
+#include <Urho3D/Graphics/Zone.h>
+#include <Urho3D/Graphics/DebugRenderer.h>
+#include <Urho3D/Graphics/StaticModel.h>
+#include <Urho3D/Graphics/Model.h>
+#include <Urho3D/Graphics/Material.h>
+#include <Urho3D/Container/Str.h>
+#include <Urho3D/I0/Log.h>
+
+#include <Urho3D/Resource/ResourceCache.h>
+#include <Urho3D/Scene/Scene.h>
+
+#include <Urho3D/Scene/PrefabResource.h>
+#include <Urho3D/Input/Input.h>
+
+#include <Urho3D/Graphics/GraphicsDefs.h>
+#include <Urho3D/UI/Text.h>
+
+#include <Urho3D/UI/UI.h>
+
+#include <Urho3D/UI/Font.h>
+
+#include <Urho3D/Core/Timer.h>
+
+#include <Urho3D/Physics/PhysicsWorld.h>
+
+// Include our new object-oriented components
+#include "Fighter.h"
+
+#include "Zombie.h"
+
+#include "CombatSystem.h"
+
+using namespace Urho3D;
+
+int main(int argc, char** argv)
+
+{
+SharedPtr<Context> context(new Context());
+SharedPtr<Engine> engine(new Engine(context) );
+
+StringVariantMap engineParameters;
+engineParameters[EP_WINDOW_TITLE] = "Kilo-Code Battle Arena";
+engineParameters[EP_RESOURCE_PREFIX_PATHS] = "Data";
+engineParameters[EP_FULL_SCREEN] = false;
+engineParameters[EP_WINDOW_WIDTH] = 1152;
+engineParameters[EP_WINDOW_HEIGHT] = 864;
+engineParameters[EP_ MULTI SAMPLE] = 1;
+engineParameters[EP_VSYNC] = true;
+
+if (!engine->Initialize(engineParameters, {}))
+
+{
+URHO3D_LOGERROR( "Could not initialise the engine.");
+
+return 1;
+
+}
+
+// REGISTER CUSTOM COMPONENT FACTORIES SO THE ENGINE CAN REFLECT THEM
+context->RegisterFactory<Fighter>();
+context->RegisterFactory<Zombie>();
+context->RegisterFactory<CombatSystem>();
+
+file:///D:/new-test-kilo/updated-physics.txt 10/18
+
+
+--- Page 11 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+auto* renderer = engine->GetSubsystem<Renderer>();
+
+auto* cache = engine->GetSubsystem<ResourceCache>();
+auto* input = engine->GetSubsystem<Input>();
+
+auto* ui = engine->GetSubsystem<UI>();
+
+auto* time = engine->GetSubsystem<Time>();
+
+// ---- Diagnostics HUD Overlay ----
+
+auto* font = cache->GetResource<Font>("Fonts/Anonymous Pro.ttf");
+auto* debugText = ui->GetRoot()->CreateChild<Text>();
+if (font && debugText)
+{
+debugText->SetText("SPACEBAR: ATTACK / RESPAWN | W/S: ZOOM | A/D: ORBIT");
+debugText->SetFont(font, 16);
+debugText->SetColor (Color: :GREEN) ;
+debugText ->SetHorizontalAlignment (HA_CENTER) ;
+debugText ->SetVerticalAlignment(VA_TOP) ;
+
+// ---- World Scene Layout Initialization ----
+
+SharedPtr<Scene> scene(new Scene(context) );
+scene->CreateComponent<Octree>();
+
+scene->CreateComponent<DebugRenderer>() ;
+scene->CreateComponent<PhysicsWorld>(); // Required for RigidBody components
+
+auto* z = scene->CreateComponent<Zone>();
+z->SetBoundingBox(BoundingBox(-1000.0f, 1000.@f));
+z->SetAmbientColor(Color(@.35f, @.35f, @.35f));
+z->SetFogColor(Color(@.55f, @.55f, @.55f));
+z->SetFogStart (150. Of);
+
+z->SetFogEnd(250.@Ff) ;
+
+Node* 1 = scene->CreateChild("KeyLight") ;
+1->SetDirection(Vector3(@.2f, -@.8f, @.5f));
+auto* dl = 1->CreateComponent<Light>() ;
+d1->SetLightType(LIGHT_DIRECTIONAL) ;
+dl->SetColor(Color(®.8f, @.784f, @.76f));
+dl->SetBrightness(@.72f);
+
+d1l->SetCastShadows (false);
+
+Node* fillLightNode = scene->CreateChild("FillLight");
+fillLightNode->SetDirection(Vector3(-@.4f, -@.6f, -@.2f));
+auto* fillLight = fillLightNode->CreateComponent<Light>();
+fillLight->SetLightType(LIGHT_DIRECTIONAL) ;
+fillLight->SetColor(Color(@.4f, @.4f, @.44f));
+fillLight->SetBrightness(@.32f);
+
+auto* cameraNode = scene->CreateChild("Camera") ;
+cameraNode->SetPosition(Vector3(@.0f, 1.2f, -3.5f));
+cameraNode->LookAt(Vector3(@.0f, @.6f, 1.6f));
+
+auto* camera = cameraNode->CreateComponent<Camera>();
+
+Node* camLightNode = scene->CreateChild("ViewerLight") ;
+camLightNode->SetPosition(cameraNode->GetPosition());
+camLightNode->SetRotation(cameraNode->GetRotation());
+auto* camLight = camLightNode->CreateComponent<Light>();
+camLight->SetLightType(LIGHT SPOT) ;
+camLight->SetColor(Color(1.2f, 1.12, 1.04f));
+camLight->SetBrightness (3.2);
+camLight->SetRange(40. Ff);
+
+camLight->SetFov(72.0f);
+camLight->SetCastShadows (false) ;
+
+SharedPtr<Viewport> viewport(new Viewport(context, scene, camera));
+
+viewport ->SetDrawDebug(true) ;
+renderer->SetViewport(@, viewport);
+
+// SSSSSS SSS SSS SSS SSS SSS SS SSS SSS SS SSS SS SS SSS SS SS SSS SSS SS SSS SS SSS SSS SS SSS STS =
+// COMPONENT CREATION & BINDING POOL
+
+file:///D:/new-test-kilo/updated-physics.txt 11/18
+
+
+--- Page 12 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+// 1. Create and attach the Fighter component
+
+Node* axeManPivot = scene->CreateChild("AxeManPivot" ) ;
+axeManPivot->SetPosition(Vector3(@.59f, @.0f, 1.6f));
+
+auto* fighterComponent = axeManPivot->CreateComponent<Fighter>();
+fighterComponent->Initialize(axeManPivot, "test.glb.d/Prefab.prefab") ;
+
+// 2. Create and attach the Zombie component
+
+Node* zombiePivot = scene->CreateChild("ZombiePivot") ;
+zombiePivot->SetPosition(Vector3(-2.0f, @.@f, 1.6f)); // Moved closer to be visible on
+auto* zombieComponent = zombiePivot->CreateComponent<Zombie>() ;
+
+const ea::string zombiePrefabPath = "firing-running-
+
+didn'twork/test_out/test.gltf.d/Prefab. prefab";
+
+zombieComponent->Initialize(zombiePivot, zombiePrefabPath) ;
+
+// 3. Setup the Master Combat System Arbitrator Component
+
+Node* coreSystemNode = scene->CreateChild("CombatSystemNode") ;
+
+auto* combatSystem = coreSystemNode->CreateComponent<CombatSystem>() ;
+combatSystem->Initialize(fighterComponent, zombieComponent, debugText);
+
+[/ ssessesessessssessesssesssssssssssesssssssssesssssssessssesseseeeese===5
+
+while (!engine->IsExiting())
+{
+engine->RunFrame();
+float dt = time->GetTimeStep();
+
+// --- ZOMBIE AUTOPSY: run every frame, but only log every 30th to save IO ---
+static int debugFrame = 0;
+debugFrame++;
+
+bool logNow = (debugFrame % 3@ == 1);
+
+if (logNow && zombieComponent)
+{
+Node* zPivot = zombieComponent->GetNode();
+if (zPivot)
+{
+URHO3D_LOGINFOF ("[Z-AUTOPSY] Pivot pos=%s rot=%s",
+zPivot->GetPosition().ToString().c_str(),
+zPivot->GetRotation().ToString().c_str());
+
+Node* zMesh = zPivot->GetChild("ZombieMesh") ;
+if (zMesh)
+{
+URHO3D_LOGINFOF("[Z-AUTOPSY] Mesh worldPos=%s scale=%s",
+zMesh->GetWorldPosition().ToString().c_str(),
+zMesh->GetScale().ToString().c_str());
+
+AnimatedModel* am = zMesh->FindComponent<AnimatedModel>() ;
+if (!am) am = zPivot->FindComponent<AnimatedModel>(); // fallback
+if (am)
+{
+BoundingBox bb = am->GetWorldBoundingBox() ;
+URHO3D_LOGINFOF("[Z-AUTOPSY] WorldBB min=%s max=%s size=%s",
+bb.min_.ToString().c_str(),
+bb.max_.ToString().c_str(),
+bb.Size().ToString().c_str());
+URHO3D_LOGINFOF("[Z-AUTOPSY] Drawable enabled=%d castShadows=%d",
+am->IsEnabled(), am->GetCastShadows());
+
+}
+else
+{
+URHO3D_LOGWARNING("[Z-AUTOPSY] NO AnimatedModel found!");
+}
+}
+else
+{
+
+file:///D:/new-test-kilo/updated-physics.txt
+
+screen
+
+12/18
+
+
+--- Page 13 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+URHO3D_LOGWARNING("[Z-AUTOPSY] NO 'ZombieMesh' child found!");
+}
+
+RigidBody* zBody = zombieComponent->GetRigidBody();
+if (zBody)
+{
+
+URHO3D_LOGINFOF("[Z-AUTOPSY] Physics pos=%s vel=%s mass=%.1f",
+zBody->GetPosition().ToString().c_str(),
+zBody->GetLinearVelocity().ToString().c_str(),
+zBody->GetMass());
+
+}
+}
+}
+// --- VISUAL DEBUG DRAW ---
+auto* dbg = scene->GetComponent<DebugRenderer>();
+if (dbg)
+{
+dbg->SetEnabled(true); // make sure it's on
+if (zombieComponent && zombieComponent->GetNode() )
+{
+Node* zPivot = zombieComponent->GetNode();
+// Red wire sphere at pivot
+dbg->AddSphere(Sphere(zPivot->GetWorldPosition(), @.2f), Color::RED);
+Node* zMesh = zPivot->GetChild("ZombieMesh") ;
+if (zMesh)
+AnimatedModel* am = zMesh->FindComponent<AnimatedModel>();
+if (am)
+{
+// Green wire bounding box of the actual model
+dbg - >AddBoundingBox(am- >GetWorldBoundingBox(), Color::GREEN);
+}
+}
+}
+// Also draw fighter for reference
+if (fighterComponent && fighterComponent->GetNode())
+{
+Node* fPivot = fighterComponent->GetNode();
+dbg->AddSphere(Sphere(fPivot->GetWorldPosition(), @.2f), Color: :BLUE) ;
+AnimatedModel* fam = fPivot->FindComponent<AnimatedModel>() ;
+if (!fam && fPivot->GetChild("AxeManMesh") )
+fam = fPivot->GetChild("AxeManMesh" ) ->FindComponent<AnimatedModel>();
+if (fam)
+dbg- >AddBoundingBox(fam->GetWorldBoundingBox(), Color: :CYAN) ;
+}
+}
+if (input->GetKeyPress(KEY_SPACE) )
+{
+if (combatSystem->IsArenaHitFrozen())
+{
+combatSystem->ResetSimulation();
+}
+else
+{
+combatSystem->HandleManualAttack();
+}
+}
+
+combatSystem->UpdateCombat (dt) ;
+
+// Camera controls
+const Vector3 screenCenterAnchor(@.@f, 0.6f, 1.6f);
+Vector3 anchorToCamVector = cameraNode->GetPosition() - screenCenterAnchor;
+
+file:///D:/new-test-kilo/updated-physics.txt 13/18
+
+
+--- Page 14 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+}
+
+bool orbitLeft
+bool orbitRight
+
+if (orbitLeft || orbitRight)
+
+{
+float rotationDirection = orbitLeft ? -90.0f : 90.0f;
+rotationDirection *= dt;
+Quaternion yawOrbitRotation(rotationDirection, Vector3::UP);
+anchorToCamVector = yawOrbitRotation * anchorToCamVector ;
+cameraNode->SetPosition(screenCenterAnchor + anchorToCamVector) ;
+}
+
+if (input->GetKeyDown(KEY_W)) cameraNode->Translate(Vector3::FORWARD * 3.@f * dt);
+if (input->GetKeyDown(KEY_S)) cameraNode->Translate(Vector3::BACK * 3.0f * dt);
+
+cameraNode->LookAt(screenCenterAnchor) ;
+
+camLightNode->SetPosition(cameraNode->GetPosition());
+camLightNode->SetRotation(cameraNode->GetRotation());
+
+if (input->GetKeyPress(KEY_ESCAPE)) engine->Exit();
+}
+
+renderer->SetViewport(@, nullptr);
+engine->Exit();
+
+return Q;
+
+"Zombie.cpp"
+
+#include "Zombie.h"
+
+#include "Fighter.h"
+
+#include <Urho3D/I0/Log.h>
+
+#include <Urho3D/Core/Context.h>
+
+#include <Urho3D/Resource/ResourceCache.h>
+#include <Urho3D/Scene/PrefabResource.h>
+#include <Urho3D/Graphics/AnimatedModel .h>
+#include <Urho3D/Graphics/Skeleton.h>
+#include <Urho3D/Physics/RigidBody.h>
+#include <Urho3D/Physics/CollisionShape.h>
+#include <cmath>
+
+Zombie: :Zombie(Context* context) : LogicComponent (context)
+
+{
+SetUpdateEventMask(USE_FIXEDUPDATE) ;
+}
+void Zombie: :RegisterObject(Context* context)
+{
+context->RegisterFactory<Zombie>();
+}
+void Zombie: :Initialize(Node* node, const ea::string& prefabPath)
+{
+node_ = node;
+if (!node_) return;
+startPosition_ = node_->GetPosition();
+node_->SetRotation(Quaternion(@.0f, 90.0f, @.Of));
+size t lastSlash = prefabPath.find last _of('/');
+runAnimPath_ = (lastSlash != ea::string::npos) ? prefabPath.substr(@, lastSlash) +
+"/Animations/mixamo.com.ani" : prefabPath;
+
+meshNode_ = node_->CreateChild("ZombieMesh") ;
+
+auto* cache = GetSubsystem<ResourceCache>();
+
+auto* prefab = cache->GetResource<PrefabResource>(prefabPath) ;
+if (prefab)
+
+file:///D:/new-test-kilo/updated-physics.txt
+
+input->GetKeyDown(KEY_A) || input->GetKeyDown(KEY_Q);
+input->GetKeyDown(KEY_D) || input->GetKeyDown(KEY_E);
+
+14/18
+
+
+--- Page 15 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+{
+
+prefab->InstantiateReference(meshNode_);
+animController_ = meshNode_->FindComponent<AnimationController>();
+meshNode_->SetScale(75.0f);
+meshNode_->SetPosition(Vector3: :ZERO);
+meshNode_->SetRotation(Quaternion: : IDENTITY) ;
+SetupPhysics();
+SetupBoneColliders();
+}
+Reset();
+
+}
+
+void Zombie: :SetupPhysics()
+{
+if (!node_) return;
+rigidBody_ = node_->GetOrCreateComponent<RigidBody>() ;
+if (rigidBody_)
+{
+rigidBody_->SetMass(60.0f) ;
+rigidBody_->SetUseGravity(true); // Gravity active like Ninja Sample
+rigidBody_->SetLinearDamping(5.@f);
+rigidBody_->SetAngularDamping(10.®f) ;
+rigidBody_->SetKinematic(false) ;
+rigidBody_->SetCollisionLayer (4) ;
+rigidBody_->SetCollisionMask(@xFFFFFFFF);
+
+// NINJA SAMPLE RULE: Freeze all angular rotations (X, Y, Z rotation tipping over)
+rigidBody_->SetAngularFactor(Vector3: :ZERO) ;
+
+collisionShape_ = node_->GetOrCreateComponent<CollisionShape>() ;
+if (collisionShape_) collisionShape_->SetCapsule(@.45f, 1.6f, Vector3(0.0f, @.8f, @.@f));
+}
+
+void Zombie: :SetupBoneColliders()
+
+{
+
+if (!meshNode_) return;
+
+AnimatedModel* animModel = nullptr;
+ea: :vector<Node*> childNodesWithModel;
+meshNode_->GetChildrenWithComponent<AnimatedModel>(childNodesWithModel, true);
+
+if (auto* topModel = meshNode_->GetComponent<AnimatedModel>())
+{
+animModel = topModel;
+
+}
+else if (!childNodesWithModel.empty())
+
+{
+animModel = childNodesWithModel.front()->GetComponent<AnimatedModel>() ;
+}
+if (!animModel1)
+{
+
+URHO3D_LOGWARNING("[ZOMBIE-PHYSICS] Could not find AnimatedModel inside instantiated
+prefab layout branches!");
+return;
+}
+
+Skeleton& skeleton = animModel->GetSkeleton();
+const char* headNames[] = { "mixamorig:Head", "mixamorig Head", "Head" };
+Bone* headBone = nullptr;
+for (const char* name : headNames) {
+headBone = skeleton.GetBone(name) ;
+if (headBone) break;
+}
+
+if (headBone && headBone->node_)
+{
+
+auto* boneBody = headBone->node_->GetOrCreateComponent<RigidBody>();
+boneBody->SetMass(5.@f);
+
+file:///D:/new-test-kilo/updated-physics.txt 15/18
+
+
+--- Page 16 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+boneBody->SetKinematic(true) ;
+boneBody->SetCollisionLayer (4) ;
+
+auto* boneShape = headBone->node_->GetOrCreateComponent<CollisionShape>();
+
+boneShape->SetSphere(@.22f, Vector3(@.@f, @.08f, @.ef));
+
+URHO3D_LOGINFO('"[ZOMBIE-PHYSICS] Attached absolute solid bounding sphere to Head bone
+node.");
+
+}
+
+void Zombie: :FixedUpdate(float timeStep)
+{
+
+if (isBiteSynced_ || health_ <= @ || isFrozen_) return;
+
+if (!isContactFrozen_)
+
+{
+Vector3 pos = node_->GetPosition();
+pos.x_ += runSpeed_ * timeStep;
+node_->SetPosition(pos);
+
+if (rigidBody_)
+{
+rigidBody_->SetPosition(pos);
+
+rigidBody_->SetLinearVelocity(Vector3: :ZERO);
+}
+
+else if (rigidBody_)
+{
+
+}
+
+rigidBody_->SetLinearVelocity(Vector3: : ZERO);
+
+}
+
+void Zombie: :CheckCollision(Fighter* fighter)
+
+{
+if (!node_ || !fighter || isFrozen_ || health_ <= @ || isNeckBiting_ || isBiteSynced_) return;
+
+// Use Ninja sample ground alignment logic
+
+Vector3 myPos = node_->GetPosition();
+
+Vector3 targetPos = fighter->GetPosition();
+
+float boundaryX = targetPos.x_ - solidStopThreshold_;
+float deltaX = myPos.x_ - targetPos.x_;
+
+if (isContactFrozen_)
+{
+if (myPos.x_ > boundaryX)
+{
+node_->SetPosition(Vector3(boundaryX, myPos.y_, myPos.z_));
+if (rigidBody_)
+{
+rigidBody_->SetPosition(Vector3(boundaryX, myPos.y_, myPos.z_));
+rigidBody_->SetLinearVelocity(Vector3: : ZERO);
+}
+}
+
+return;
+
+}
+
+if (myPos.x_ >= boundaryx)
+{
+node_->SetPosition(Vector3(boundaryX, myPos.y_, myPos.z_));
+if (rigidBody_)
+{
+rigidBody_->SetPosition(Vector3(boundaryX, myPos.y_, myPos.z_));
+rigidBody_->SetLinearVelocity(Vector3: : ZERO) ;
+}
+
+isContactFrozen_ = true;
+
+}
+
+void Zombie: :HandleHit(Fighter* fighter)
+
+file:///D:/new-test-kilo/updated-physics.txt 16/18
+
+
+--- Page 17 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+{
+if (hasBeenHit_) return;
+hasBeenHit_ = true;
+isFrozen_ = true;
+if (animController_) animController_->StopA11();
+if (rigidBody_)
+{
+rigidBody_->SetLinearVelocity(Vector3: :ZERO);
+rigidBody_->SetAngularVelocity(Vector3: : ZERO);
+}
+}
+void Zombie: :ApplyBoundaryFreeze()
+{
+if (isContactFrozen_) return;
+isContactFrozen_ = true;
+if (rigidBody_) rigidBody_->SetLinearVelocity(Vector3: :ZERO) ;
+}
+void Zombie: : TriggerNeckBite()
+{
+if (isNeckBiting ) return;
+isNeckBiting_ = true;
+if (rigidBody_) rigidBody_->SetLinearVelocity(Vector3: :ZERO) ;
+}
+void Zombie: :StartNeckBite(Node* targetNode)
+{
+TriggerNeckBite();
+}
+void Zombie: :Reset()
+{
+isFrozen_ = false;
+isContactFrozen_ = false;
+isNeckBiting = false;
+isBiteSynced_ = false;
+hasBeenHit_ = false;
+health_ = maxHealth_;
+if (node_)
+{
+node_->SetPosition(startPosition_);
+node_->SetRotation(Quaternion(@.@f, 90.0f, @.eFf));
+if (rigidBody_)
+{
+rigidBody_->SetKinematic(false) ;
+rigidBody_->SetAngularFactor(Vector3::ZERO); // Re-enforce lock
+rigidBody_->SetPosition(startPosition_);
+rigidBody_->SetRotation(Quaternion(@.0f, 90.0f, @.0f));
+rigidBody_->SetLinearVelocity(Vector3: :ZERO);
+rigidBody_->ResetForces();
+rigidBody_->Activate();
+}
+}
+if (animController_ && !runAnimPath_.empty())
+{
+animController_->StopA11();
+AnimationParameters params(context_, runAnimPath_);
+params.looped_ = true;
+animController_->PlayNewExclusive(params) ;
+animController_->SetTime(runAnimPath_, 0.@f);
+animController_->SetSpeed(runAnimPath_, @.5f);
+}
+}
+"Zombie.h"
+
+file:///D:/new-test-kilo/updated-physics.txt 17/18
+
+
+--- Page 18 ---
+
+5/28/26, 11:52 PM updated-physics.txt
+
+#pragma once
+
+#include <Urho3D/Scene/LogicComponent.h>
+#include <Urho3D/Graphics/AnimationController.h>
+#include <Urho3D/Physics/RigidBody.h>
+
+#include <Urho3D/Physics/CollisionShape.h>
+#include <Urho3D/Graphics/AnimatedModel .h>
+
+using namespace Urho3D;
+
+class Fighter;
+
+class Zombie : public LogicComponent
+
+{
+
+URHO3D_OBJECT(Zombie, LogicComponent) ;
+
+public:
+
+Zombie(Context* context);
+~Zombie() override = default;
+
+static void RegisterObject(Context* context);
+
+void Initialize(Node* node, const ea::string& prefabPath) ;
+void Reset();
+void FixedUpdate(float timeStep) override;
+
+void TriggerNeckBite();
+
+void StartNeckBite(Node* targetNode) ;
+void ApplyBoundaryFreeze();
+
+void CheckCollision(Fighter* fighter);
+void HandleHit(Fighter* fighter);
+
+void SetBiteSynced(bool synced) { isBiteSynced_ = synced; }
+
+bool IsFrozen() const { return isFrozen_; }
+
+bool IsContactFrozen() const { return isContactFrozen_; }
+
+bool IsNeckBiting() const { return isNeckBiting ; }
+
+Vector3 GetPosition() const { return node_ ? node_->GetPosition() : Vector3
+RigidBody* GetRigidBody() const { return rigidBody_; }
+
+private:
+
+}3
+
+void SetupPhysics();
+void SetupBoneColliders();
+
+SharedPtr<Node> node_;
+
+SharedPtr<Node> meshNode_;
+SharedPtr<AnimationController> animController_;
+SharedPtr<RigidBody> rigidBody_;
+SharedPtr<CollisionShape> collisionShape_;
+
+ea::string runAnimPath_;
+Vector3 startPosition_{-4.5f, 0.0f, 1.6f};
+
+bool isFrozen_{false};
+
+bool isContactFrozen_{false};
+bool isNeckBiting {false};
+bool isBiteSynced_{false};
+
+float health _{100.0f};
+
+const float maxHealth_{100.ef};
+
+const float runSpeed_{@.90f};
+
+bool hasBeenHit_ = false;
+
+const float solidStopThreshold_{1.2¥};
+
+file:///D:/new-test-kilo/updated-physics.txt
+
+::ZERO; }
+
+18/18
